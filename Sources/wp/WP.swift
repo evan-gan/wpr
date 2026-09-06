@@ -12,4 +12,10 @@ struct WP: ParsableCommand {
       CommandGroup(name: "automation", subcommands: [TickCommand.self, TimerCommand.self]),
     ]
   )
+
+  // first run: make sure config.toml exists before any subcommand looks for it
+  static func main() {
+    _ = try? Root.config()
+    main(nil)
+  }
 }

@@ -11,28 +11,64 @@ struct Config: Decodable {
   var library: String
   var generated: String
   var sources: Sources
-  var rotation: Rotation
-  var pool: Pool
+  var rotation = Rotation()
+  var pool = Pool()
+
+  var libraryURL: URL { URL(fileURLWithPath: (library as NSString).expandingTildeInPath) }
+  var generatedURL: URL { URL(fileURLWithPath: (generated as NSString).expandingTildeInPath) }
 
   struct Sources: Decodable {
     var enabled: [String]
   }
 
+  // every key optional so an older config.toml keeps working when new knobs appear
   struct Rotation: Decodable {
-    var minFit: Double
-    var minRes: Double
-    var interval: String
-    private enum CodingKeys: String, CodingKey { case minFit = "min_fit", minRes = "min_res", interval }
+    var minFit = 0.6
+    var minRes = 0.3
+    var matchAppearance = true
+    var interval = "30m"
+    var holdManual = "2h"
+
+    init() {}
+    private enum K: String, CodingKey {
+      case minFit = "min_fit", minRes = "min_res", matchAppearance = "match_appearance", interval, holdManual = "hold_manual"
+    }
+    init(from d: Decoder) throws {
+      let c = try d.container(keyedBy: K.self)
+      minFit = try c.decodeIfPresent(Double.self, forKey: .minFit) ?? minFit
+      minRes = try c.decodeIfPresent(Double.self, forKey: .minRes) ?? minRes
+      matchAppearance = try c.decodeIfPresent(Bool.self, forKey: .matchAppearance) ?? matchAppearance
+      interval = try c.decodeIfPresent(String.self, forKey: .interval) ?? interval
+      holdManual = try c.decodeIfPresent(String.self, forKey: .holdManual) ?? holdManual
+    }
+
+    var holdManualSeconds: TimeInterval {
+      TimeInterval((try? TimerCommand.parseDuration(holdManual)) ?? 7200)
+    }
   }
 
   struct Pool: Decodable {
-    var perModule: Int
-    var keep: Int
-    private enum CodingKeys: String, CodingKey { case perModule = "per_module", keep }
+    var perModule = 4
+    var keep = 12
+
+    init() {}
+    private enum K: String, CodingKey { case perModule = "per_module", keep }
+    init(from d: Decoder) throws {
+      let c = try d.container(keyedBy: K.self)
+      perModule = try c.decodeIfPresent(Int.self, forKey: .perModule) ?? perModule
+      keep = try c.decodeIfPresent(Int.self, forKey: .keep) ?? keep
+    }
   }
 
-  var libraryURL: URL { URL(fileURLWithPath: (library as NSString).expandingTildeInPath) }
-  var generatedURL: URL { URL(fileURLWithPath: (generated as NSString).expandingTildeInPath) }
+  private enum K: String, CodingKey { case library, generated, sources, rotation, pool }
+  init(from d: Decoder) throws {
+    let c = try d.container(keyedBy: K.self)
+    library = try c.decode(String.self, forKey: .library)
+    generated = try c.decodeIfPresent(String.self, forKey: .generated) ?? "~/Library/Application Support/wp/generated"
+    sources = try c.decodeIfPresent(Sources.self, forKey: .sources) ?? Sources(enabled: [])
+    rotation = try c.decodeIfPresent(Rotation.self, forKey: .rotation) ?? Rotation()
+    pool = try c.decodeIfPresent(Pool.self, forKey: .pool) ?? Pool()
+  }
 }
 
 enum Root {
@@ -45,12 +81,25 @@ enum Root {
     return found
   }
 
+  static func configURL() throws -> URL { try url().appendingPathComponent("config.toml") }
+  static func modulesDir() throws -> URL { try url().appendingPathComponent("modules") }
+
+  // first run copies config.default.toml into place so there's something to edit
   static func config() throws -> Config {
-    let text = try String(contentsOf: try url().appendingPathComponent("config.toml"), encoding: .utf8)
+    let file = try configURL()
+    if !FileManager.default.fileExists(atPath: file.path) {
+      try FileManager.default.copyItem(at: try url().appendingPathComponent("config.default.toml"), to: file)
+      FileHandle.standardError.write("wp: created \(file.path) — set `library` to your wallpapers folder\n".data(using: .utf8)!)
+    }
+    let text = try String(contentsOf: file, encoding: .utf8)
     return try TOMLDecoder().decode(Config.self, from: text)
   }
 
-  static func modulesDir() throws -> URL { try url().appendingPathComponent("modules") }
+  private static func isRoot(_ dir: URL) -> Bool {
+    let fm = FileManager.default
+    return fm.fileExists(atPath: dir.appendingPathComponent("Package.swift").path)
+      && fm.fileExists(atPath: dir.appendingPathComponent("modules").path)
+  }
 
   private static func resolve() throws -> URL {
     let fm = FileManager.default
@@ -59,17 +108,15 @@ enum Root {
     }
     var dir = URL(fileURLWithPath: fm.currentDirectoryPath)
     while true {
-      if fm.fileExists(atPath: dir.appendingPathComponent("config.toml").path),
-         fm.fileExists(atPath: dir.appendingPathComponent("modules").path) {
-        return dir
-      }
+      if isRoot(dir) { return dir }
       let parent = dir.deletingLastPathComponent()
       if parent.path == dir.path { break }
       dir = parent
     }
     let pointer = fm.homeDirectoryForCurrentUser.appendingPathComponent(".config/wp/root")
     if let s = try? String(contentsOf: pointer, encoding: .utf8) {
-      return URL(fileURLWithPath: s.trimmingCharacters(in: .whitespacesAndNewlines))
+      let u = URL(fileURLWithPath: s.trimmingCharacters(in: .whitespacesAndNewlines))
+      if isRoot(u) { return u }
     }
     throw WPError("can't find the wp repo root. set WP_ROOT, run from inside the repo, or `make install`")
   }

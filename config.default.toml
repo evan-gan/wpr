@@ -1,0 +1,30 @@
+# copied to config.toml on first run. config.toml is yours and isn't tracked.
+
+# where your wallpaper images live. each subfolder becomes a source you can enable/disable;
+# loose files at the top level show up as the source "misc".
+library = "~/Pictures/Wallpapers"
+
+# where generated wallpapers are written
+generated = "~/Library/Application Support/wp/generated"
+
+[sources]
+# folders (by name) and generator modules in the rotation. `wp sources` lists what's available.
+enabled = ["neon-contours", "cosmos"]
+
+[rotation]
+# minimum fraction of an image that must survive center-cropping onto a display
+min_fit = 0.6
+# minimum image size relative to the display (0.3 = allow up to ~3x upscale)
+min_res = 0.3
+# prefer dark wallpapers in dark mode and bright ones in light mode
+match_appearance = true
+# how often `wp timer` runs `wp tick`
+interval = "30m"
+# after you set a wallpaper yourself (set / gen / next), the timer leaves that display alone this long
+hold_manual = "2h"
+
+[pool]
+# unseen generated wallpapers to keep on hand, per module per display size (topped up on AC power only)
+per_module = 4
+# total generated files kept per module per display size before the oldest get trashed
+keep = 12
