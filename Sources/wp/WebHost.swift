@@ -14,6 +14,7 @@ enum WebHost {
       "--width", "\(width)", "--height", "\(height)", "--seed", "\(seed)",
       "--out", out.path,
     ]
+    if let t = module.timeoutMs { args += ["--timeout", "\(t)"] }
     for p in params { args += ["--param", p] }
 
     let log = try Subprocess.run(executable: try bunPath(), arguments: args)

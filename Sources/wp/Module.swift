@@ -7,11 +7,12 @@ struct Module: Decodable {
   let description: String
   let host: Host
   let entry: String
+  let timeoutMs: Int?
   var dir = URL(fileURLWithPath: "/")
 
   enum Host: String, Decodable { case metal, web, exec }
 
-  private enum CodingKeys: String, CodingKey { case name, description, host, entry }
+  private enum CodingKeys: String, CodingKey { case name, description, host, entry, timeoutMs = "timeout_ms" }
 
   var entryURL: URL { dir.appendingPathComponent(entry) }
 
