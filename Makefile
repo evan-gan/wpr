@@ -11,6 +11,9 @@ vendor:
 	bun install --cwd hosts/web
 	bun install --cwd vendor/cosmos --no-save
 	bun run --cwd vendor/cosmos build
+	bun install --cwd vendor/monolith-terrain --no-save
+	# bun writes a lockfile even with --no-save; keep the submodules clean
+	rm -f vendor/*/bun.lock
 
 release:
 	swift build -c release
