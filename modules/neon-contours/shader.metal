@@ -46,7 +46,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   float2 g = abs(fract(hit.xz * 0.25) - 0.5);
   float2 gw = fwidth(hit.xz * 0.25);
   float grid = 1.0 - smoothstep(0.0, max(gw.x, gw.y) * 1.5, min(g.x, g.y));
-  float3 gridCol = palette(0.4, baseHue) * 0.02;
+  float3 gridCol = palette(0.5, baseHue) * 0.02;
 
   float3 skyBase = float3(0.0015, 0.0015, 0.004);
   float3 horizonGlow = palette(0.0, baseHue) * 0.05;
