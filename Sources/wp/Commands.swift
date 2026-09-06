@@ -17,6 +17,25 @@ struct DisplaysCommand: ParsableCommand {
   }
 }
 
+struct RmCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "rm", abstract: "trash a generated wallpaper and forget it")
+
+  @Argument(help: "paths of generated images (library images are never touched)") var paths: [String]
+
+  func run() throws {
+    var index = try Index.load()
+    for p in paths {
+      let path = URL(fileURLWithPath: (p as NSString).expandingTildeInPath).standardizedFileURL.path
+      guard let c = index.candidates[path] else { throw ValidationError("not in the index: \(path)") }
+      guard c.kind == .generated else { throw ValidationError("\(c.name) is a library image; disable its source instead") }
+      try FileManager.default.trashItem(at: c.url, resultingItemURL: nil)
+      index.candidates.removeValue(forKey: path)
+      print("trashed \(c.source)/\(c.name)")
+    }
+    try index.save()
+  }
+}
+
 struct SetCommand: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "set", abstract: "set an image as wallpaper")
 

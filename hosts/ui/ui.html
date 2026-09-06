@@ -1,0 +1,232 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wp</title>
+<style>
+  :root {
+    --bg: #101013; --panel: #17181c; --line: #26272d; --text: #e6e6ea; --dim: #8a8b93;
+    --ok: #4ade80; --warn: #facc15; --bad: #f87171; --accent: #8ab4ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 -apple-system, system-ui, sans-serif; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+  header { display: flex; align-items: center; gap: 14px; padding: 12px 18px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--bg); z-index: 5; }
+  header h1 { font-size: 16px; margin: 0 8px 0 0; letter-spacing: .04em; }
+  .pill { padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); }
+  .pill.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, transparent); }
+  .spacer { flex: 1; }
+  button { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; cursor: pointer; font: inherit; }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  button.small { padding: 2px 7px; font-size: 12px; }
+  section { padding: 14px 18px; border-bottom: 1px solid var(--line); }
+  .displays { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+  .display { display: flex; gap: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+  .display img { width: 160px; aspect-ratio: 16/9; object-fit: contain; background: #000; border-radius: 6px; }
+  .display .info { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  .display .name { font-weight: 600; }
+  .display .row { display: flex; gap: 6px; margin-top: auto; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px 4px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  .chip.filtered { border-color: var(--accent); }
+  .chip label { cursor: pointer; }
+  .chip .n { color: var(--dim); }
+  .chip.off label { color: var(--dim); text-decoration: line-through; }
+  .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .toolbar .group { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .toolbar .group button { border: 0; border-radius: 0; }
+  .toolbar .group button.active { background: var(--accent); color: #000; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; padding: 14px 18px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; }
+  .card.ineligible { opacity: .45; }
+  .card img { width: 100%; aspect-ratio: 16/9; object-fit: contain; background: #000; cursor: zoom-in; display: block; }
+  .card .strip { display: flex; height: 6px; }
+  .card .strip i { flex: 1; }
+  .card .meta { padding: 8px 10px 4px; display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; color: var(--dim); }
+  .card .meta b { color: var(--text); font-weight: 600; }
+  .fit { padding: 0 6px; border-radius: 4px; border: 1px solid var(--line); }
+  .fit.g { color: var(--ok); } .fit.y { color: var(--warn); } .fit.r { color: var(--bad); }
+  .card .actions { display: flex; gap: 6px; padding: 6px 10px 10px; }
+  .card .actions .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); align-self: center; }
+  #toast { position: fixed; right: 18px; bottom: 18px; display: flex; flex-direction: column; gap: 8px; z-index: 10; }
+  .t { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 8px; padding: 8px 12px; max-width: 420px; white-space: pre-wrap; }
+  .t.bad { border-left-color: var(--bad); }
+  #light { position: fixed; inset: 0; background: rgba(0,0,0,.9); display: none; align-items: center; justify-content: center; z-index: 20; cursor: zoom-out; }
+  #light img { max-width: 96vw; max-height: 92vh; }
+  #light.on { display: flex; }
+  .busy { opacity: .6; pointer-events: none; }
+  .empty { color: var(--dim); padding: 30px 18px; }
+</style>
+
+<header>
+  <h1>wp</h1>
+  <span id="power" class="pill mono"></span>
+  <span id="appearance" class="pill mono"></span>
+  <span class="spacer"></span>
+  <button id="nextAll">next (all displays)</button>
+  <button id="tick" title="exactly what the timer runs">tick</button>
+  <button id="refresh">refresh</button>
+</header>
+
+<section><div id="displays" class="displays"></div></section>
+
+<section>
+  <div id="sources" class="chips"></div>
+</section>
+
+<section class="toolbar">
+  <span class="mono" style="color:var(--dim)">show</span>
+  <div class="group" id="showGroup"></div>
+  <span class="mono" style="color:var(--dim)">sort</span>
+  <div class="group" id="sortGroup">
+    <button data-sort="source" class="active">source</button>
+    <button data-sort="recent">recent</button>
+    <button data-sort="lum">lum</button>
+    <button data-sort="fit">fit</button>
+  </div>
+  <span class="spacer"></span>
+  <span id="count" class="mono" style="color:var(--dim)"></span>
+</section>
+
+<div id="grid" class="grid"></div>
+<div id="toast"></div>
+<div id="light" onclick="this.classList.remove('on')"><img id="lightImg" alt=""></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let S = null;
+const view = { show: "all", sort: "source", source: null };
+
+const fmt = (n) => (n ?? 0).toFixed(2);
+const fitClass = (f) => f.eligible ? (f.fit >= 0.85 && f.res >= 0.7 ? "g" : "y") : "r";
+const shortName = (d) => d.name.replace(/Built-in Retina Display/, "laptop").split(" ")[0];
+
+function toast(msg, bad = false) {
+  const t = document.createElement("div");
+  t.className = "t" + (bad ? " bad" : "");
+  t.textContent = msg;
+  $("#toast").appendChild(t);
+  setTimeout(() => t.remove(), bad ? 9000 : 4000);
+}
+
+async function api(path, body) {
+  document.body.classList.add("busy");
+  try {
+    const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body ?? {}) });
+    const j = await r.json();
+    if (!j.ok) toast(j.err || j.out || "failed", true);
+    else if (j.out) toast(j.out);
+    await load();
+    return j;
+  } finally {
+    document.body.classList.remove("busy");
+  }
+}
+
+async function load() {
+  const r = await fetch("/api/state");
+  if (!r.ok) { toast(await r.text(), true); return; }
+  S = await r.json();
+  render();
+}
+
+function render() {
+  $("#power").textContent = S.power;
+  $("#power").className = "pill mono" + (S.power === "AC" ? " on" : "");
+  $("#appearance").textContent = S.dark ? "dark mode" : "light mode";
+
+  $("#displays").innerHTML = S.displays.map((d) => `
+    <div class="display">
+      <img src="${d.wallpaperThumb ? `/thumbs/${d.wallpaperThumb}.jpg` : ""}" alt="">
+      <div class="info">
+        <div class="name">${d.index} · ${d.name}</div>
+        <div class="mono" style="color:var(--dim)">${d.width}×${d.height} · ${d.aspect.toFixed(3)}:1</div>
+        <div class="mono" style="color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${d.wallpaper ?? ""}">${d.wallpaper ? d.wallpaper.split("/").slice(-2).join("/") : "—"}</div>
+        <div class="row"><button class="small" data-act="next" data-display="${d.index}">next</button></div>
+      </div>
+    </div>`).join("");
+
+  $("#sources").innerHTML = S.sources.map((s, i) => `
+    <span class="chip ${s.enabled ? "" : "off"} ${view.source === s.name ? "filtered" : ""}" data-si="${i}">
+      <input type="checkbox" ${s.enabled ? "checked" : ""} data-act="toggle" title="${s.enabled ? "in rotation" : "not in rotation"}">
+      <label data-act="filter" title="${esc(s.description ?? "folder")}">${esc(s.name)}</label>
+      <span class="n mono">${s.count}</span>
+      ${s.kind === "module" ? `<button class="small" data-act="gen" title="render one new candidate per display into the pool">+ gen</button>` : ""}
+    </span>`).join("");
+
+  $("#showGroup").innerHTML = [`<button data-show="all" class="${view.show === "all" ? "active" : ""}">all</button>`]
+    .concat(S.displays.map((d) => `<button data-show="${d.index}" class="${view.show == d.index ? "active" : ""}">fits ${shortName(d)}</button>`)).join("");
+  document.querySelectorAll("#showGroup button").forEach((b) => b.onclick = () => { view.show = b.dataset.show; render(); });
+  document.querySelectorAll("#sortGroup button").forEach((b) => { b.classList.toggle("active", b.dataset.sort === view.sort); b.onclick = () => { view.sort = b.dataset.sort; render(); }; });
+
+  let items = S.candidates.filter((c) => !view.source || c.source === view.source);
+  if (view.show !== "all") items = items.filter((c) => c.fits.find((f) => f.display == view.show)?.eligible);
+  const fitFor = (c) => view.show === "all" ? Math.max(...c.fits.map((f) => f.fit)) : c.fits.find((f) => f.display == view.show).fit;
+  const sorters = {
+    source: (a, b) => (a.source + a.name).localeCompare(b.source + b.name),
+    recent: (a, b) => (b.lastShown ?? "").localeCompare(a.lastShown ?? "") || (b.seed ?? 0) - (a.seed ?? 0),
+    lum: (a, b) => (a.lum ?? 0) - (b.lum ?? 0),
+    fit: (a, b) => fitFor(b) - fitFor(a),
+  };
+  items.sort(sorters[view.sort]);
+  $("#count").textContent = `${items.length} of ${S.candidates.length}`;
+
+  shown = items;
+  $("#grid").innerHTML = items.length ? items.map((c, i) => {
+    const anyEligible = c.fits.some((f) => f.eligible);
+    return `
+    <div class="card ${anyEligible ? "" : "ineligible"}" data-i="${i}">
+      <img src="${c.thumb ? `/thumbs/${c.thumb}.jpg` : ""}" loading="lazy" alt="" data-act="zoom">
+      <div class="strip">${c.dominant.map((h) => `<i style="background:${h}"></i>`).join("")}</div>
+      <div class="meta mono">
+        <b>${esc(c.source)}</b>
+        <span>${c.width}×${c.height}</span>
+        ${c.lum != null ? `<span title="luminance">lum ${fmt(c.lum)}</span>` : ""}
+        ${c.fits.map((f) => `<span class="fit ${fitClass(f)}" title="display ${f.display}: fit ${fmt(f.fit)} · res ${fmt(f.res)}${f.eligible ? "" : " · not eligible"}">${f.display}: ${fmt(f.fit)}</span>`).join("")}
+        ${c.shownCount ? `<span title="times shown">×${c.shownCount}</span>` : ""}
+        ${c.seed != null ? `<span title="seed">#${c.seed}</span>` : ""}
+      </div>
+      <div class="actions">
+        <span class="name mono" title="${esc(c.path)}">${esc(c.name)}</span>
+        ${c.fits.map((f) => `<button class="small" data-act="set" data-display="${f.display}" ${f.eligible ? "" : "disabled"}
+          title="set on ${esc(S.displays.find((d) => d.index === f.display)?.name ?? "")}">→ ${f.display}</button>`).join("")}
+        ${c.kind === "generated" ? `<button class="small" data-act="rm" title="trash this render and forget it">✕</button>` : ""}
+      </div>
+    </div>`;
+  }).join("") : `<div class="empty">nothing matches</div>`;
+}
+
+// one delegated handler; buttons refer to items by index so paths never touch markup
+let shown = [];
+function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-act]");
+  if (!el) return;
+  const act = el.dataset.act;
+  const card = el.closest(".card");
+  const c = card ? shown[Number(card.dataset.i)] : null;
+  const chip = el.closest(".chip");
+  const s = chip ? S.sources[Number(chip.dataset.si)] : null;
+  switch (act) {
+    case "set": return api("/api/set", { path: c.path, display: Number(el.dataset.display) });
+    case "rm": return api("/api/rm", { path: c.path });
+    case "zoom": $("#lightImg").src = `/file?path=${encodeURIComponent(c.path)}`; $("#light").classList.add("on"); return;
+    case "next": return api("/api/next", { display: Number(el.dataset.display) });
+    case "gen": return api("/api/gen", { module: s.name });
+    case "filter": view.source = view.source === s.name ? null : s.name; return render();
+  }
+});
+document.addEventListener("change", (e) => {
+  const el = e.target.closest("[data-act='toggle']");
+  if (!el) return;
+  const s = S.sources[Number(el.closest(".chip").dataset.si)];
+  api("/api/source", { name: s.name, enabled: el.checked });
+});
+
+$("#nextAll").onclick = () => api("/api/next");
+$("#tick").onclick = () => api("/api/tick");
+$("#refresh").onclick = load;
+load();
+setInterval(load, 60000);
+</script>
