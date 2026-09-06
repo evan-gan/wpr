@@ -60,7 +60,13 @@ struct TickCommand: ParsableCommand {
     if !noRotate {
       let picker = Picker(cfg: cfg, index: index)
       var used = Set<String>()
+      let clock = DateFormatter()
+      clock.dateFormat = "HH:mm"
       for s in screens {
+        if let until = index.heldUntil(s, hold: cfg.rotation.holdManualSeconds) {
+          log("\(s.index) \(s.name): set by hand, holding until \(clock.string(from: until))")
+          continue
+        }
         guard let e = picker.pick(for: s, source: nil, avoiding: used) else {
           log("\(s.index) \(s.name): nothing eligible")
           continue

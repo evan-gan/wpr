@@ -92,6 +92,7 @@ struct NextCommand: ParsableCommand {
       if !dryRun {
         try NSWorkspace.shared.setDesktopImageURL(e.c.url, for: s.nsScreen, options: Fill.crop.options)
         index.markShown(e.c.path)
+        index.markManual(s)
       }
     }
     if !dryRun { try index.save() }
@@ -124,18 +125,18 @@ struct LsCommand: ParsableCommand {
       }
     } else {
       rows.sort { ($0.source, $0.name) < ($1.source, $1.name) }
-      for c in rows {
       print("lum   size         source            name")
+      for c in rows {
         print("\(lumText(c))  \("\(c.width)x\(c.height)".pad(11))  \(c.source.pad(16))  \(c.name)")
       }
     }
     print("\(rows.count) candidates")
   }
-}
 
   private func lumText(_ c: Candidate) -> String {
     c.palette.map { String(format: "%.2f", $0.luminance) } ?? " -- "
   }
+}
 
 struct ScanCommand: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "scan", abstract: "re-index the library and generated wallpapers")

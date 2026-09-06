@@ -76,6 +76,7 @@ struct GenCommand: ParsableCommand {
       if let s = t.screen, !noSet {
         try NSWorkspace.shared.setDesktopImageURL(url, for: s.nsScreen, options: Fill.crop.options)
         index?.markShown(url.standardizedFileURL.path)
+        index?.markManual(s)
         print("  -> \(s.index) \(s.name)")
       }
     }

@@ -73,6 +73,15 @@ struct TimerCommand: ParsableCommand {
         print("not loaded (\(plistURL.path) \(FileManager.default.fileExists(atPath: plistURL.path) ? "exists" : "missing"))")
       }
       print("power: \(Power.isOnAC() ? "AC" : "battery")")
+      if let cfg = try? Root.config(), let index = try? Index.load() {
+        let clock = DateFormatter()
+        clock.dateFormat = "HH:mm"
+        for s in Screen.all {
+          if let until = index.heldUntil(s, hold: cfg.rotation.holdManualSeconds) {
+            print("hold: \(s.index) \(s.name) set by hand, rotation resumes \(clock.string(from: until))")
+          }
+        }
+      }
       if let log = try? String(contentsOf: logURL, encoding: .utf8) {
         let tail = log.split(separator: "\n").suffix(8)
         if !tail.isEmpty { print("recent log:"); for l in tail { print("  \(l)") } }

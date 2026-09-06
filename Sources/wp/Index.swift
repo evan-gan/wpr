@@ -31,6 +31,8 @@ struct Candidate: Codable {
 
 struct Index: Codable {
   var candidates: [String: Candidate] = [:]
+  // display uuid -> when a human last set its wallpaper; tick leaves those alone for rotation.hold_manual
+  var manualSets: [String: Date] = [:]
 
   static var fileURL: URL {
     FileManager.default.homeDirectoryForCurrentUser
@@ -47,6 +49,15 @@ struct Index: Codable {
     let dec = JSONDecoder()
     dec.dateDecodingStrategy = .iso8601
     return try dec.decode(Index.self, from: Data(contentsOf: fileURL))
+  }
+
+  // older index files predate manualSets
+  private enum CodingKeys: String, CodingKey { case candidates, manualSets }
+  init() {}
+  init(from d: Decoder) throws {
+    let c = try d.container(keyedBy: CodingKeys.self)
+    candidates = try c.decode([String: Candidate].self, forKey: .candidates)
+    manualSets = try c.decodeIfPresent([String: Date].self, forKey: .manualSets) ?? [:]
   }
 
   func save() throws {
@@ -110,6 +121,16 @@ struct Index: Codable {
   mutating func markShown(_ path: String) {
     candidates[path]?.lastShown = Date()
     candidates[path]?.shownCount += 1
+  }
+
+  mutating func markManual(_ screen: Screen) {
+    manualSets[screen.uuid] = Date()
+  }
+
+  func heldUntil(_ screen: Screen, hold: TimeInterval) -> Date? {
+    guard let t = manualSets[screen.uuid] else { return nil }
+    let until = t.addingTimeInterval(hold)
+    return until > Date() ? until : nil
   }
 }
 

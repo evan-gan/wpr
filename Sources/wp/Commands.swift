@@ -48,9 +48,13 @@ struct SetCommand: ParsableCommand {
     guard FileManager.default.fileExists(atPath: url.path) else {
       throw ValidationError("no such file: \(url.path)")
     }
+    var index = try Index.load()
     for s in try Screen.select(display) {
       try NSWorkspace.shared.setDesktopImageURL(url, for: s.nsScreen, options: fill.options)
+      index.markShown(url.standardizedFileURL.path)
+      index.markManual(s)
       print("\(s.index) \(s.name) <- \(url.lastPathComponent)  [\(fill.rawValue)]")
     }
+    try index.save()
   }
 }
