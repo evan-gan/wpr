@@ -1,5 +1,7 @@
 {
   "dependencies": {
+    "glsl-noise": "^0.0.0",
+    "nice-color-palettes": "^4.0.0",
     "puppeteer-core": "^25.9.0"
   }
 }
