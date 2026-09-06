@@ -46,9 +46,14 @@ struct Picker {
     guard let chosen = weighted(sources, sources.map { Double(bySource[$0]!.count).squareRoot() }) else { return nil }
     let group = bySource[chosen]!
     let now = Date()
+    let dark: Bool? = cfg.rotation.matchAppearance ? Appearance.isDark : nil
     let weights = group.map { e -> Double in
       let recency = e.c.lastShown.map { min(1.0, now.timeIntervalSince($0) / 86400) } ?? 1.0
-      return e.fit * (0.5 + 0.5 * e.res) * (0.15 + 0.85 * recency)
+      var w = e.fit * (0.5 + 0.5 * e.res) * (0.15 + 0.85 * recency)
+      if let dark, let lum = e.c.palette?.luminance {
+        w *= 0.05 + 0.95 * Appearance.preference(luminance: lum, dark: dark)
+      }
+      return w
     }
     return weighted(group, weights)
   }
@@ -82,7 +87,8 @@ struct NextCommand: ParsableCommand {
         continue
       }
       used.insert(e.c.path)
-      print("\(s.index) \(s.name) <- \(e.c.source)/\(e.c.name)  fit \(String(format: "%.2f", e.fit)) res \(String(format: "%.2f", e.res))\(dryRun ? "  (dry run)" : "")")
+      let lum = e.c.palette.map { String(format: " lum %.2f", $0.luminance) } ?? ""
+      print("\(s.index) \(s.name) <- \(e.c.source)/\(e.c.name)  fit \(String(format: "%.2f", e.fit)) res \(String(format: "%.2f", e.res))\(lum)\(dryRun ? "  (dry run)" : "")")
       if !dryRun {
         try NSWorkspace.shared.setDesktopImageURL(e.c.url, for: s.nsScreen, options: Fill.crop.options)
         index.markShown(e.c.path)
@@ -109,22 +115,27 @@ struct LsCommand: ParsableCommand {
       rows.sort {
         Fit.score(imageAspect: $0.aspect, displayAspect: screen.aspect) > Fit.score(imageAspect: $1.aspect, displayAspect: screen.aspect)
       }
-      print("   fit   res   size         source            name")
+      print("   fit   res   lum   size         source            name")
       for c in rows {
         let f = Fit.score(imageAspect: c.aspect, displayAspect: screen.aspect)
         let r = Fit.resolution(c, screen)
-        let mark = (f < cfg.rotation.minFit || r < cfg.rotation.minRes) ? "x" : " "
-        print("\(mark) \(String(format: "%.2f  %.2f", f, r))  \("\(c.width)x\(c.height)".pad(11))  \(c.source.pad(16))  \(c.name)")
+        let mark = (f < cfg.rotation.minFit || r < cfg.rotation.minRes || !Fit.sizeAllowed(c, screen)) ? "x" : " "
+        print("\(mark) \(String(format: "%.2f  %.2f  %@", f, r, lumText(c)))  \("\(c.width)x\(c.height)".pad(11))  \(c.source.pad(16))  \(c.name)")
       }
     } else {
       rows.sort { ($0.source, $0.name) < ($1.source, $1.name) }
       for c in rows {
-        print("\("\(c.width)x\(c.height)".pad(11))  \(c.source.pad(16))  \(c.name)")
+      print("lum   size         source            name")
+        print("\(lumText(c))  \("\(c.width)x\(c.height)".pad(11))  \(c.source.pad(16))  \(c.name)")
       }
     }
     print("\(rows.count) candidates")
   }
 }
+
+  private func lumText(_ c: Candidate) -> String {
+    c.palette.map { String(format: "%.2f", $0.luminance) } ?? " -- "
+  }
 
 struct ScanCommand: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "scan", abstract: "re-index the library and generated wallpapers")
