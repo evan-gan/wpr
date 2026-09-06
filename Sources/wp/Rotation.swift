@@ -11,6 +11,11 @@ enum Fit {
   static func resolution(_ c: Candidate, _ s: Screen) -> Double {
     min(1.0, Double(c.width) / Double(s.pixelSize.w), Double(c.height) / Double(s.pixelSize.h))
   }
+
+  // generated images were rendered for one exact display; never crop them onto another
+  static func sizeAllowed(_ c: Candidate, _ s: Screen) -> Bool {
+    c.kind != .generated || (c.width == s.pixelSize.w && c.height == s.pixelSize.h)
+  }
 }
 
 struct Picker {
@@ -23,6 +28,7 @@ struct Picker {
     index.candidates.values.compactMap { c in
       guard cfg.sources.enabled.contains(c.source) else { return nil }
       if let source, c.source != source { return nil }
+      guard Fit.sizeAllowed(c, s) else { return nil }
       let fit = Fit.score(imageAspect: c.aspect, displayAspect: s.aspect)
       let res = Fit.resolution(c, s)
       guard fit >= cfg.rotation.minFit, res >= cfg.rotation.minRes else { return nil }
