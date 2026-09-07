@@ -147,7 +147,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   }
   center /= float(n);
 
-  // satellites: 0-3 per ring, sharing rings, and they carry mass so they dent the sheet too
+  // satellites: 0-3 per ring, sharing rings. nearly massless — a shallow dimple, never a pit
   Sat sats[MAX_SATS];
   int ns = 0;
   for (int i = 0; i < n; i++) {
@@ -160,8 +160,8 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
         float2 xz = ringPoint(bodies[i], q, hash11(ks) * 6.2831853);
         sats[ns].pos = float3(xz.x, 0.0, xz.y);
         sats[ns].radius = 0.016 + hash11(ks + 1.0) * 0.02;
-        sats[ns].mass = 0.03 + hash11(ks + 2.0) * 0.06;
-        sats[ns].soft = sats[ns].radius * 4.5;
+        sats[ns].mass = 0.006 + hash11(ks + 2.0) * 0.014;
+        sats[ns].soft = sats[ns].radius * 8.0;
         sats[ns].parent = i;
         ns++;
       }
