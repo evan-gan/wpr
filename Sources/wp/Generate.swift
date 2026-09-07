@@ -6,7 +6,7 @@ enum Generator {
     switch m.host {
     case .metal:
       let source = try String(contentsOf: m.entryURL, encoding: .utf8)
-      let img = try MetalHost.render(source: source, width: width, height: height, seed: seed)
+      let img = try MetalHost.render(source: source, width: width, height: height, seed: seed, params: params)
       try MetalHost.writePNG(img, to: out)
     case .web:
       try FileManager.default.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)

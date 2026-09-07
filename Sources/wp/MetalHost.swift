@@ -70,12 +70,24 @@ enum MetalHost {
   }
   """
 
-  static func render(source: String, width: Int, height: Int, seed: UInt32) throws -> CGImage {
+  // `--set name=value` becomes `#define WP_PARAM_name value` ahead of the module source; a module
+  // opts in with `#ifndef WP_PARAM_name / #define WP_PARAM_name <default> / #endif`
+  static func render(source: String, width: Int, height: Int, seed: UInt32, params: [String] = []) throws -> CGImage {
     guard let dev = MTLCreateSystemDefaultDevice() else { throw WPError("no Metal device") }
+
+    var defines = ""
+    for p in params {
+      guard let eq = p.firstIndex(of: "=") else { throw WPError("bad --set '\(p)', want name=value") }
+      let name = p[..<eq], value = p[p.index(after: eq)...]
+      guard name.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }), Double(value) != nil else {
+        throw WPError("metal params are numeric: --set \(name)=<number>")
+      }
+      defines += "#define WP_PARAM_\(name) \(value)\n"
+    }
 
     let lib: MTLLibrary
     do {
-      lib = try dev.makeLibrary(source: header + source + footer, options: nil)
+      lib = try dev.makeLibrary(source: header + defines + source + footer, options: nil)
     } catch {
       throw WPError("shader compile failed:\n\(error.localizedDescription)")
     }
