@@ -61,12 +61,27 @@ enum MetalHost {
     return c.z * mix(float3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
   }
 
+  // a module may add a second pass by defining
+  //   float4 wp_post(float2 uv, texture2d<float> scene, constant Uniforms& u)
+  // the first pass then renders to an rgba16Float texture (hdr colour, alpha free for depth or
+  // anything else) and wp_post writes the final image. wp_scene samples it in the same uv space
+  constexpr sampler wp_sampler(filter::linear, address::clamp_to_edge);
+  inline float4 wp_scene(texture2d<float> t, float2 uv) { return t.sample(wp_sampler, float2(uv.x, 1.0 - uv.y)); }
+
   """
 
   static let footer = """
 
   fragment float4 wp_fragment(VOut in [[stage_in]], constant Uniforms& u [[buffer(0)]]) {
     return wp_main(in.uv, u);
+  }
+  """
+
+  static let postFooter = """
+
+  fragment float4 wp_fragment_post(VOut in [[stage_in]], constant Uniforms& u [[buffer(0)]],
+                                   texture2d<float> scene [[texture(0)]]) {
+    return wp_post(in.uv, scene, u);
   }
   """
 
@@ -85,36 +100,53 @@ enum MetalHost {
       defines += "#define WP_PARAM_\(name) \(value)\n"
     }
 
+    let hasPost = source.contains("wp_post(")
     let lib: MTLLibrary
     do {
-      lib = try dev.makeLibrary(source: header + defines + source + footer, options: nil)
+      lib = try dev.makeLibrary(source: header + defines + source + footer + (hasPost ? postFooter : ""), options: nil)
     } catch {
       throw WPError("shader compile failed:\n\(error.localizedDescription)")
     }
 
-    let pd = MTLRenderPipelineDescriptor()
-    pd.vertexFunction = lib.makeFunction(name: "wp_vertex")
-    pd.fragmentFunction = lib.makeFunction(name: "wp_fragment")
-    pd.colorAttachments[0].pixelFormat = .bgra8Unorm
-    let pso = try dev.makeRenderPipelineState(descriptor: pd)
+    func pipeline(_ fragment: String, _ format: MTLPixelFormat) throws -> MTLRenderPipelineState {
+      let pd = MTLRenderPipelineDescriptor()
+      pd.vertexFunction = lib.makeFunction(name: "wp_vertex")
+      pd.fragmentFunction = lib.makeFunction(name: fragment)
+      pd.colorAttachments[0].pixelFormat = format
+      return try dev.makeRenderPipelineState(descriptor: pd)
+    }
+    func texture(_ format: MTLPixelFormat, _ storage: MTLStorageMode) throws -> MTLTexture {
+      let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
+      td.usage = [.renderTarget, .shaderRead]
+      td.storageMode = storage
+      guard let t = dev.makeTexture(descriptor: td) else { throw WPError("Metal setup failed") }
+      return t
+    }
 
-    let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
-    td.usage = [.renderTarget, .shaderRead]
-    td.storageMode = .shared
-    guard let tex = dev.makeTexture(descriptor: td),
-          let queue = dev.makeCommandQueue(),
-          let cb = queue.makeCommandBuffer() else { throw WPError("Metal setup failed") }
+    guard let queue = dev.makeCommandQueue(), let cb = queue.makeCommandBuffer() else { throw WPError("Metal setup failed") }
+    let u = Uniforms(res: SIMD2(Float(width), Float(height)), seed: Float(seed), time: 0)
+    func pass(_ pso: MTLRenderPipelineState, into target: MTLTexture, reading input: MTLTexture?) throws {
+      let rp = MTLRenderPassDescriptor()
+      rp.colorAttachments[0].texture = target
+      rp.colorAttachments[0].loadAction = .clear
+      rp.colorAttachments[0].storeAction = .store
+      guard let enc = cb.makeRenderCommandEncoder(descriptor: rp) else { throw WPError("no encoder") }
+      enc.setRenderPipelineState(pso)
+      withUnsafeBytes(of: u) { enc.setFragmentBytes($0.baseAddress!, length: $0.count, index: 0) }
+      if let input { enc.setFragmentTexture(input, index: 0) }
+      enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
+      enc.endEncoding()
+    }
 
-    let rp = MTLRenderPassDescriptor()
-    rp.colorAttachments[0].texture = tex
-    rp.colorAttachments[0].loadAction = .clear
-    rp.colorAttachments[0].storeAction = .store
-    guard let enc = cb.makeRenderCommandEncoder(descriptor: rp) else { throw WPError("no encoder") }
-    enc.setRenderPipelineState(pso)
-    var u = Uniforms(res: SIMD2(Float(width), Float(height)), seed: Float(seed), time: 0)
-    enc.setFragmentBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-    enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
-    enc.endEncoding()
+    let tex = try texture(.bgra8Unorm, .shared)
+    if hasPost {
+      // the first pass keeps hdr colour plus whatever the module puts in alpha; the second reads it
+      let scene = try texture(.rgba16Float, .private)
+      try pass(try pipeline("wp_fragment", .rgba16Float), into: scene, reading: nil)
+      try pass(try pipeline("wp_fragment_post", .bgra8Unorm), into: tex, reading: scene)
+    } else {
+      try pass(try pipeline("wp_fragment", .bgra8Unorm), into: tex, reading: nil)
+    }
     cb.commit()
     cb.waitUntilCompleted()
     if let err = cb.error { throw WPError("GPU error: \(err.localizedDescription)") }
