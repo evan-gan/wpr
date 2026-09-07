@@ -87,14 +87,17 @@ float2 gradient(float2 xz, thread const Body* b, int n, thread const Sat* s, int
                 potential(xz + float2(0, e), b, n, s, ns) - potential(xz - float2(0, e), b, n, s, ns)) / (2.0 * e);
 }
 
-float sphereHit(float3 ro, float3 rd, float3 c, float r) {
+// ray/sphere with an anti-aliased edge: cov is how much of this pixel the sphere covers, from
+// the ray's closest approach to the centre measured against half a pixel at that depth
+float sphereHit(float3 ro, float3 rd, float3 c, float r, float pxPerUnit, thread float& cov) {
   float3 oc = ro - c;
-  float bq = dot(oc, rd);
-  float cq = dot(oc, oc) - r * r;
-  float disc = bq * bq - cq;
-  if (disc < 0.0) return -1.0;
-  float t = -bq - sqrt(disc);
-  return t > 0.0 ? t : -1.0;
+  float b = dot(oc, rd);
+  if (b >= 0.0) return -1.0;
+  float dperp = sqrt(max(dot(oc, oc) - b * b, 0.0));
+  float px = 0.5 * -b / pxPerUnit;
+  cov = 1.0 - smoothstep(r - px, r + px, dperp);
+  if (cov <= 0.0) return -1.0;
+  return -b - sqrt(max(r * r - dperp * dperp, 0.0));
 }
 
 float2 ringPoint(thread const Body& b, int k, float ang) {
@@ -213,21 +216,25 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   float pxPerUnit = u.res.y / (2.0 * tanHalf);   // world -> pixels at distance 1
 
   // spheres first: bodies and their satellites
-  float tS = 1e9;
+  float tS = 1e9, sphereCov = 0.0;
   float3 sphereCol = 0.0;
   for (int i = 0; i < n; i++) {
-    float t = sphereHit(ro, rd, bodies[i].pos, bodies[i].radius);
+    float cov;
+    float t = sphereHit(ro, rd, bodies[i].pos, bodies[i].radius, pxPerUnit, cov);
     if (t > 0.0 && t < tS) {
       tS = t;
+      sphereCov = cov;
       float3 nrm = normalize(ro + rd * t - bodies[i].pos);
       float rim = pow(1.0 - max(0.0, dot(nrm, -rd)), 2.0);
       sphereCol = mix(bodies[i].core * 1.6, pal.hot * 2.0, rim * 0.7);
     }
   }
   for (int i = 0; i < ns; i++) {
-    float t = sphereHit(ro, rd, sats[i].pos, sats[i].radius);
+    float cov;
+    float t = sphereHit(ro, rd, sats[i].pos, sats[i].radius, pxPerUnit, cov);
     if (t > 0.0 && t < tS) {
       tS = t;
+      sphereCov = cov;
       float3 nrm = normalize(ro + rd * t - sats[i].pos);
       float3 parentPos = bodies[sats[i].parent].pos;
       float lit = 0.35 + 0.65 * max(0.0, dot(nrm, normalize(parentPos - sats[i].pos)));
@@ -245,7 +252,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     if (dh < 0.0015) { hit = true; break; }
     tPrev = t;
     t += clamp(dh * 0.45, 0.004, 0.5);
-    if (t > tS || t > 70.0) break;
+    if ((sphereCov >= 1.0 && t > tS) || t > 70.0) break;   // a partly covered rim still needs the sheet behind it
   }
   if (hit) {
     float lo = tPrev, hi = t;
@@ -257,13 +264,11 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     t = 0.5 * (lo + hi);
   }
 
-  float3 col;
+  float3 sky = pal.bg * 0.3;
+  float3 col = sky;
   bool sphereFront = tS < t || (!hit && tS < 1e8);
   float tLimit = sphereFront ? tS : (hit ? t : 1e9);
-  if (sphereFront) {
-    col = sphereCol;
-    t = tS;
-  } else if (hit) {
+  if (hit) {
     float3 q = ro + rd * t;
     float h = potential(q.xz, bodies, n, sats, ns);
     float2 g = gradient(q.xz, bodies, n, sats, ns);
@@ -313,8 +318,6 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     col = mix(col, lineCol, line * crowd * pal.lineAlpha * fog);
     col *= edge;
     col = mix(col, pal.bg * 0.35, 1.0 - fog);
-  } else {
-    col = pal.bg * 0.3;
   }
 
   // orbit rings: ellipses floating in a horizontal plane, hidden wherever the sheet is nearer
@@ -366,6 +369,9 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     }
   }
   col = mix(col, pal.dash, dash * 0.85 * dashFog);
+
+  // spheres go on last so their anti-aliased rims blend over whatever is behind them
+  if (sphereFront) col = mix(col, sphereCol, sphereCov);
 
   // bloom: screen-space halos around every body the camera can actually see. a lens halo is all
   // or nothing, so the test is a shadow ray from the camera to the body, shared by every pixel
