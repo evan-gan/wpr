@@ -284,9 +284,8 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     depth = pow(depth, 0.25);
     float lambert = max(0.0, dot(nrm, normalize(float3(0.3, 1.0, 0.25))));
     col = pal.bg * (0.5 + 0.5 * lambert);
-    col = mix(col, pal.warm, smoothstep(0.22, 0.55, depth));
-    col = mix(col, pal.hot, smoothstep(0.55, 0.9, depth));
-    col = mix(col, pal.coreWhite * 1.3, smoothstep(0.9, 1.0, depth) * 0.5);
+    col = mix(col, pal.warm, smoothstep(0.25, 0.6, depth));
+    col = mix(col, pal.hot, smoothstep(0.6, 1.0, depth) * 0.85);
 
     // isolines of the potential, constant width in screen pixels, brightening with depth
     float levels = 16.0;
@@ -295,7 +294,9 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float dl = min(fract(f), 1.0 - fract(f));
     float line = 1.0 - smoothstep(0.3 * fw, 1.2 * fw, dl);
     float crowd = 1.0 - smoothstep(0.28, 0.55, fw);
-    float3 lineCol = mix(pal.line, pal.lineHot, smoothstep(0.2, 0.8, depth));
+    // contours brighten down the bowl, then go dark on the hot floor so they stay legible
+    float3 lineCol = mix(pal.line, pal.lineHot, smoothstep(0.2, 0.6, depth));
+    lineCol = mix(lineCol, pal.warm * 0.7, smoothstep(0.7, 1.0, depth));
 
     // optional disc edge: the sheet fades to nothing past a radius
     float edge = 1.0;
