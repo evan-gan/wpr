@@ -301,14 +301,23 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     col = pal.bg * 0.3;
   }
 
-  // bloom: screen-space halos around every body — but only where the body isn't behind the
-  // sheet at this pixel. light doesn't shine through the ground
-  float tFwd = t * dot(rd, fwd);
+  // bloom: screen-space halos around every body the camera can actually see. a lens halo is all
+  // or nothing — so the test is a shadow ray from the camera to the body, not a per-pixel depth
+  // compare (which cut the halo in half along the near wall of every bowl)
   for (int i = 0; i < n; i++) {
     float3 v = bodies[i].pos - ro;
     float z = dot(v, fwd);
     if (z <= 0.1) continue;
-    if ((hit || sphereFront) && tFwd < z - bodies[i].radius * 1.5) continue;
+    float len = length(v);
+    float3 dir = v / len;
+    bool visible = true;
+    for (int s = 1; s < 40; s++) {
+      float tt = len * float(s) / 40.0;
+      if (tt > len - bodies[i].radius) break;
+      float3 q = ro + dir * tt;
+      if (q.y < potential(q.xz, bodies, n, sats, ns)) { visible = false; break; }
+    }
+    if (!visible) continue;
     float2 sp = float2(dot(v, right), dot(v, up)) / (z * tanHalf);
     float2 spx = (sp / float2(aspect, 1.0) * 0.5 + 0.5) * u.res;
     float dpx = length(uv * u.res - spx);
