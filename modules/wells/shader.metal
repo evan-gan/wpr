@@ -323,8 +323,11 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float2 spx = (sp / float2(aspect, 1.0) * 0.5 + 0.5) * u.res;
     float dpx = length(uv * u.res - spx);
     float rpx = bodies[i].radius / (z * tanHalf) * u.res.y * 0.5;
-    // the shadow ray is the same answer for every pixel; only pay for it where the halo reaches
-    if (dpx > max(rpx * 14.0, 40.0)) continue;
+    // the shadow ray is the same answer for every pixel; only pay for it where the halo reaches,
+    // and fade the halo out toward that reach so the cutoff never shows against a dark sky
+    float reach = max(rpx * 14.0, 40.0);
+    if (dpx > reach) continue;
+    float fade = 1.0 - smoothstep(reach * 0.45, reach, dpx);
     float len = length(v);
     float3 dir = v / len;
     bool visible = true;
@@ -337,7 +340,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     if (!visible) continue;
     float tight = 1.0 / (1.0 + pow(dpx / max(rpx * 0.9, 2.0), 2.0));
     float wide = 1.0 / (1.0 + pow(dpx / max(rpx * 3.0, 6.0), 3.0));
-    col += bodies[i].core * tight * 0.35 + bodies[i].glow * wide * 0.04 * bodies[i].mass;
+    col += (bodies[i].core * tight * 0.35 + bodies[i].glow * wide * 0.04 * bodies[i].mass) * fade;
   }
 
   col *= 1.0 - 0.3 * dot(uv - 0.5, uv - 0.5);
