@@ -64,9 +64,11 @@ enum MetalHost {
   // a module may add a second pass by defining
   //   float4 wp_post(float2 uv, texture2d<float> scene, constant Uniforms& u)
   // the first pass then renders to an rgba16Float texture (hdr colour, alpha free for depth or
-  // anything else) and wp_post writes the final image. wp_scene samples it in the same uv space
-  constexpr sampler wp_sampler(filter::linear, address::clamp_to_edge);
+  // anything else), gets mipmaps, and wp_post writes the final image. wp_scene samples it in the
+  // same uv space; the lod form reads a coarser level, i.e. an area average around uv
+  constexpr sampler wp_sampler(filter::linear, mip_filter::linear, address::clamp_to_edge);
   inline float4 wp_scene(texture2d<float> t, float2 uv) { return t.sample(wp_sampler, float2(uv.x, 1.0 - uv.y)); }
+  inline float4 wp_scene(texture2d<float> t, float2 uv, float lod) { return t.sample(wp_sampler, float2(uv.x, 1.0 - uv.y), level(lod)); }
 
   """
 
@@ -115,8 +117,8 @@ enum MetalHost {
       pd.colorAttachments[0].pixelFormat = format
       return try dev.makeRenderPipelineState(descriptor: pd)
     }
-    func texture(_ format: MTLPixelFormat, _ storage: MTLStorageMode) throws -> MTLTexture {
-      let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: false)
+    func texture(_ format: MTLPixelFormat, _ storage: MTLStorageMode, mipmapped: Bool = false) throws -> MTLTexture {
+      let td = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: format, width: width, height: height, mipmapped: mipmapped)
       td.usage = [.renderTarget, .shaderRead]
       td.storageMode = storage
       guard let t = dev.makeTexture(descriptor: td) else { throw WPError("Metal setup failed") }
@@ -140,9 +142,13 @@ enum MetalHost {
 
     let tex = try texture(.bgra8Unorm, .shared)
     if hasPost {
-      // the first pass keeps hdr colour plus whatever the module puts in alpha; the second reads it
-      let scene = try texture(.rgba16Float, .private)
+      // the first pass keeps hdr colour plus whatever the module puts in alpha; the second reads
+      // it, with mipmaps so a post effect can take area averages instead of point samples
+      let scene = try texture(.rgba16Float, .private, mipmapped: true)
       try pass(try pipeline("wp_fragment", .rgba16Float), into: scene, reading: nil)
+      guard let blit = cb.makeBlitCommandEncoder() else { throw WPError("no blit encoder") }
+      blit.generateMipmaps(for: scene)
+      blit.endEncoding()
       try pass(try pipeline("wp_fragment_post", .bgra8Unorm), into: tex, reading: scene)
     } else {
       try pass(try pipeline("wp_fragment", .bgra8Unorm), into: tex, reading: nil)
