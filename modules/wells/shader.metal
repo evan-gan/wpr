@@ -6,6 +6,17 @@
 #define MAX_RINGS 3
 #define MAX_SATS 12
 
+// camera overrides: `wp gen wells --set el=0.12 --set dist=6 --set az=1.5`; negative = seeded
+#ifndef WP_PARAM_el
+#define WP_PARAM_el -1.0
+#endif
+#ifndef WP_PARAM_dist
+#define WP_PARAM_dist -1.0
+#endif
+#ifndef WP_PARAM_az
+#define WP_PARAM_az -1.0
+#endif
+
 struct Body {
   float3 pos;      // world position of the sphere center
   float mass;
@@ -162,9 +173,9 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
 
   // camera: orbit the cluster, closer or farther by seed
   bool close = r1 < 0.4;
-  float dist = close ? 3.2 + r2 * 2.5 : 7.5 + r2 * 6.0;
-  float el = (close ? 0.32 : 0.42) + r3 * 0.36;
-  float az = hash11(S + 6.0) * 6.2831853;
+  float dist = WP_PARAM_dist >= 0.0 ? WP_PARAM_dist : (close ? 3.2 + r2 * 2.5 : 7.5 + r2 * 6.0);
+  float el = WP_PARAM_el >= 0.0 ? WP_PARAM_el : (close ? 0.32 : 0.42) + r3 * 0.36;
+  float az = WP_PARAM_az >= 0.0 ? WP_PARAM_az : hash11(S + 6.0) * 6.2831853;
   float3 target = center + float3(hash11(S + 7.0) - 0.5, 0.0, hash11(S + 8.0) - 0.5) * (close ? 2.5 : 1.0);
   target.y = close ? -0.4 : -0.2;
   float3 ro = target + dist * float3(cos(el) * sin(az), sin(el), cos(el) * cos(az));
