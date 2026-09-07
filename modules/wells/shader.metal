@@ -156,14 +156,14 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       }
     }
   }
-
   // settle everything just above the bottom of its own dent
   for (int i = 0; i < n; i++) bodies[i].pos.y = potential(bodies[i].pos.xz, bodies, n, sats, ns) + bodies[i].radius * 0.9;
   for (int i = 0; i < ns; i++) sats[i].pos.y = potential(sats[i].pos.xz, bodies, n, sats, ns) + sats[i].radius * 1.1;
+
   // camera: orbit the cluster, closer or farther by seed
   bool close = r1 < 0.4;
   float dist = close ? 3.2 + r2 * 2.5 : 7.5 + r2 * 6.0;
-  float el = (close ? 0.30 : 0.36) + r3 * 0.36;
+  float el = (close ? 0.32 : 0.42) + r3 * 0.36;
   float az = hash11(S + 6.0) * 6.2831853;
   float3 target = center + float3(hash11(S + 7.0) - 0.5, 0.0, hash11(S + 8.0) - 0.5) * (close ? 2.5 : 1.0);
   target.y = close ? -0.4 : -0.2;
@@ -248,7 +248,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     }
 
     // isolines of the potential, constant width in screen pixels
-    float levels = 12.0;
+    float levels = 16.0;
     float f = h * levels;
     float fw = levels * length(g) * pixelWorld / facing + 1e-5;
     float dl = min(fract(f), 1.0 - fract(f));
@@ -308,11 +308,11 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float3 v = bodies[i].pos - ro;
     float z = dot(v, fwd);
     if (z <= 0.1) continue;
+    if ((hit || sphereFront) && tFwd < z - bodies[i].radius * 1.5) continue;
     float2 sp = float2(dot(v, right), dot(v, up)) / (z * tanHalf);
     float2 spx = (sp / float2(aspect, 1.0) * 0.5 + 0.5) * u.res;
     float dpx = length(uv * u.res - spx);
     float rpx = bodies[i].radius / (z * tanHalf) * u.res.y * 0.5;
-    if ((hit || sphereFront) && tFwd < z - bodies[i].radius * 1.5) continue;
     float tight = 1.0 / (1.0 + pow(dpx / max(rpx * 0.9, 2.0), 2.0));
     float wide = 1.0 / (1.0 + pow(dpx / max(rpx * 3.0, 6.0), 3.0));
     col += bodies[i].core * tight * 0.35 + bodies[i].glow * wide * 0.04 * bodies[i].mass;
