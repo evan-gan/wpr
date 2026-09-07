@@ -383,15 +383,17 @@ Scene buildScene(float S, float2 res, thread Body* bodies, thread Sat* sats, thr
   // depth of field, strongest on the grazing shots where it reads as macro
   float rd0 = hash11(S + 20.0);
   float dof = WP_PARAM_dof >= 0.0 ? WP_PARAM_dof : (graze ? 0.7 + rd0 * 0.3 : (close ? 0.3 + rd0 * 0.4 : 0.15 + rd0 * 0.3));
-  // focus on the subject: the body nearest the centre of the frame, not the camera's target point
-  float focus = dist, bestOff = 1e9;
+  // focus on the subject: the body that looks biggest on screen, preferring one that is actually
+  // in the frame — not the camera's target point, and not whichever small body sits nearest the
+  // centre while the real subject is off to one side
+  float focus = dist, bestSize = -1.0;
   for (int i = 0; i < n; i++) {
     float3 v = bodies[i].pos - ro;
     float z = dot(v, fwd);
     if (z <= 0.1) continue;
-    float2 sp = float2(dot(v, right), dot(v, up)) / (z * tanHalf);
-    float off = length(sp / float2(aspect, 1.0));
-    if (off < bestOff) { bestOff = off; focus = length(v); }
+    float2 sp = float2(dot(v, right), dot(v, up)) / (z * tanHalf) / float2(aspect, 1.0);
+    float size = bodies[i].radius / z * (all(abs(sp) < 1.0) ? 1.0 : 0.2);
+    if (size > bestSize) { bestSize = size; focus = length(v); }
   }
   sc.focus = focus;
 
@@ -635,10 +637,10 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   return float4(col, depth);
 }
 
-// circle of confusion, in pixels, for a point at ray depth d: sharp at the camera's target,
-// fully blurred beyond about half again as far or near
+// circle of confusion, in pixels, for a point at ray depth d: sharp within about a tenth of the
+// focus distance either side of it, fully blurred beyond about half again as far or near
 float cocRadius(float d, float focus, float maxCoc) {
-  return maxCoc * min(1.0, abs(d - focus) / (0.6 * focus));
+  return maxCoc * clamp((abs(d - focus) - 0.12 * focus) / (0.6 * focus), 0.0, 1.0);
 }
 
 float4 wp_post(float2 uv, texture2d<float> scene, constant Uniforms& u) {
@@ -651,10 +653,12 @@ float4 wp_post(float2 uv, texture2d<float> scene, constant Uniforms& u) {
   UNPACK_SCENE(sc)
   float2 px = uv * u.res;
 
-  // depth of field as a gather over a per-pixel rotated spiral (the undersampling becomes grain,
-  // which suits the print). a tap counts if its own circle of confusion reaches this pixel and it
-  // isn't behind us, or if this pixel's own circle reaches the tap — so blurred background never
-  // bleeds over a sharp foreground, while a blurred foreground does spill over what's behind it
+  // depth of field as a gather over a per-pixel rotated spiral. each tap is an area sample — a
+  // coarser mip level the farther out it sits, matching the gap between taps — so the disc fills
+  // in smoothly rather than as speckle. a tap counts if its own circle of confusion reaches this
+  // pixel and it isn't behind us, or if this pixel's own circle reaches the tap — so blurred
+  // background never bleeds over a sharp foreground, while a blurred foreground does spill over
+  // what's behind it
   float4 c0 = wp_scene(scene, uv);
   float focus = sc.focus;
   float maxCoc = u.res.y / 70.0 * sc.dof;
@@ -662,12 +666,12 @@ float4 wp_post(float2 uv, texture2d<float> scene, constant Uniforms& u) {
   float3 acc = c0.rgb;
   float wsum = 1.0;
   float rot = hash21(px + S) * 6.2831853;
-  const int N = 40;
+  const int N = 64;
   for (int i = 0; i < N; i++) {
     float r = sqrt((float(i) + 0.5) / float(N));
     float a = float(i) * 2.39996323 + rot;
     float2 off = float2(cos(a), sin(a)) * r * maxCoc;
-    float4 c = wp_scene(scene, uv + off / u.res);
+    float4 c = wp_scene(scene, uv + off / u.res, log2(max(1.0, 0.3 * length(off))));
     float cocT = cocRadius(c.a, focus, maxCoc) * step(c.a, c0.a * 1.05);
     float dpx = length(off);
     float w = smoothstep(dpx - 1.0, dpx + 1.0, max(coc0, cocT));
