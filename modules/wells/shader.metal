@@ -269,14 +269,18 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       }
     }
 
-    // dashed web: each body links to an earlier one
+    // dashed web: each body links to its nearest earlier body, so edges stay short and don't pile up
     float dash = 0.0;
     for (int i = 1; i < n; i++) {
-      int j = int(hash11(S + float(i) * 5.7) * float(i));
+      int j = 0;
+      float best = 1e9;
+      for (int k = 0; k < i; k++) {
+        float dk = length(bodies[i].pos.xz - bodies[k].pos.xz);
+        if (dk < best) { best = dk; j = k; }
+      }
       float uu;
       float dist = segDist(q.xz, bodies[i].pos.xz, bodies[j].pos.xz, uu);
-      float segLen = length(bodies[i].pos.xz - bodies[j].pos.xz);
-      float on = step(fract(uu * segLen / 0.22), 0.55);
+      float on = step(fract(uu * best / 0.22), 0.55);
       dash = max(dash, (1.0 - smoothstep(0.4 * lw, 1.4 * lw, dist)) * on);
     }
 
