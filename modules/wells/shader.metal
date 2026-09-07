@@ -118,6 +118,14 @@ float raySegment(float3 ro, float3 rd, float3 a, float3 b, thread float& s, thre
   return length(ro + rd * s - p);
 }
 
+
+// how much of a line-type mark survives at distance t: the sheet's fog, and then gone entirely
+// past a couple of camera distances — a grazing camera sees the far wall of its own bowl with
+// every contour stacked at the horizon, and those should dissolve, not stripe it
+float markFade(float t, float fogRate, float dist) {
+  return exp(-t * fogRate) * (1.0 - smoothstep(1.2, 2.4, t / dist));
+}
+
 float4 wp_main(float2 uv, constant Uniforms& u) {
   float aspect = u.res.x / u.res.y;
   float S = u.seed;
@@ -214,6 +222,10 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   float2 p = (uv - 0.5) * 2.0 * float2(aspect, 1.0) * tanHalf;
   float3 rd = normalize(fwd + right * p.x + up * p.y);
   float pxPerUnit = u.res.y / (2.0 * tanHalf);   // world -> pixels at distance 1
+  // fog in proportion to the shot: a grazing camera a few units out wants the distance gone
+  // much sooner than a high one, or far bowls' hot floors show through edge-on as pale streaks
+  float fogRate = max(0.055, 0.4 / dist);
+  float camDist = dist;   // the orbit loop shadows `dist`
 
   // spheres first: bodies and their satellites
   float tS = 1e9, sphereCov = 0.0;
@@ -317,9 +329,10 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       float R = 5.0 + hash11(S + 10.0) * 4.0;
       edge = 1.0 - smoothstep(R - 1.8, R + 0.3, length(q.xz - center.xz));
     }
-    float fog = exp(-t * 0.055);
+    float fog = exp(-t * fogRate);
+    float lineFog = markFade(t, fogRate, dist);
 
-    col = mix(col, lineCol, line * crowd * pal.lineAlpha * fog);
+    col = mix(col, lineCol, line * crowd * pal.lineAlpha * lineFog);
     col *= edge;
     col = mix(col, sky, 1.0 - fog);
   }
@@ -338,7 +351,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       float dist = abs(length(loc / float2(a, b)) - 1.0) * min(a, b);
       float lw = tp / pxPerUnit * 1.3 / sqrt(max(abs(rd.y), 0.05));
       float cov = 1.0 - smoothstep(0.4 * lw, 1.4 * lw, dist);
-      if (cov > orbit) { orbit = cov; orbitFog = exp(-tp * 0.055); }
+      if (cov > orbit) { orbit = cov; orbitFog = markFade(tp, fogRate, camDist); }
     }
   }
   col = mix(col, pal.orbit, orbit * 0.9 * orbitFog);
@@ -369,7 +382,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       float lw = s / pxPerUnit * 1.3;
       float on = step(fract(along * best / 0.22), 0.55);
       float cov = (1.0 - smoothstep(0.4 * lw, 1.4 * lw, d)) * on;
-      if (cov > dash) { dash = cov; dashFog = exp(-s * 0.055); }
+      if (cov > dash) { dash = cov; dashFog = markFade(s, fogRate, dist); }
     }
   }
   col = mix(col, pal.dash, dash * 0.85 * dashFog);
