@@ -168,13 +168,16 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       }
     }
   }
-  // bodies settle just above the floor of their own bowl; each ring floats a little above the
-  // sheet at its own extent, so it rests in the bowl instead of tunnelling through the wall
+  // bodies settle just above the floor of their own bowl; each ring floats just above the highest
+  // point of the sheet beneath it, so it rests in the bowl and never sinks into a neighbour's wall
   for (int i = 0; i < n; i++) {
     bodies[i].pos.y = potential(bodies[i].pos.xz, bodies, n, sats, ns) + bodies[i].radius * 0.9;
-    for (int q = 0; q < MAX_RINGS; q++) {
-      float2 far = ringPoint(bodies[i], q, 0.0);
-      bodies[i].ringY[q] = potential(far, bodies, n, sats, ns) + 0.03;
+    for (int q = 0; q < bodies[i].rings; q++) {
+      float top = -1e9;
+      for (int a = 0; a < 16; a++) {
+        top = max(top, potential(ringPoint(bodies[i], q, float(a) * 0.39269908), bodies, n, sats, ns));
+      }
+      bodies[i].ringY[q] = top + 0.03;
     }
   }
   for (int i = 0; i < ns; i++) {
