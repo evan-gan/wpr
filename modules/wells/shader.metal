@@ -1,8 +1,10 @@
 // gravity wells, after mjmurdoc: a gravitational potential surface raymarched in perspective,
-// isolines drawn on the surface, glowing bodies lighting their own wells, satellites,
-// orbit ellipses, and a dashed web between the masses.
+// isolines drawn on the surface, glowing bodies lighting their own wells, satellites that dent
+// the sheet too, orbit rings, and a dashed web between the masses.
 
 #define MAX_BODIES 7
+#define MAX_RINGS 3
+#define MAX_SATS 12
 
 struct Body {
   float3 pos;      // world position of the sphere center
@@ -11,8 +13,15 @@ struct Body {
   float soft;      // softening length of its well
   float3 core;     // emissive sphere color
   float3 glow;     // color it throws onto the well walls
-  float orbitA, orbitB, orbitRot;   // ellipse drawn on the surface around it (0 = none)
-  int satellites;
+  int rings;       // orbit ellipses drawn on the surface around it
+  float ringA[MAX_RINGS], ringB[MAX_RINGS];
+  float rot;
+};
+
+struct Sat {
+  float3 pos;
+  float mass, radius, soft;
+  int parent;
 };
 
 struct Palette {
@@ -48,20 +57,24 @@ Palette palette(int i) {
   return p;
 }
 
-// the potential: softened 1/r wells, summed. always <= 0, flat far away
-float potential(float2 xz, thread const Body* b, int n) {
+// the potential: softened 1/r wells, summed over bodies and satellites. always <= 0, flat far away
+float potential(float2 xz, thread const Body* b, int n, thread const Sat* s, int ns) {
   float h = 0.0;
   for (int i = 0; i < n; i++) {
     float2 d = xz - b[i].pos.xz;
     h -= b[i].mass * 0.35 / sqrt(dot(d, d) + b[i].soft * b[i].soft);
   }
+  for (int i = 0; i < ns; i++) {
+    float2 d = xz - s[i].pos.xz;
+    h -= s[i].mass * 0.35 / sqrt(dot(d, d) + s[i].soft * s[i].soft);
+  }
   return h;
 }
 
-float2 gradient(float2 xz, thread const Body* b, int n) {
+float2 gradient(float2 xz, thread const Body* b, int n, thread const Sat* s, int ns) {
   float e = 0.006;
-  return float2(potential(xz + float2(e, 0), b, n) - potential(xz - float2(e, 0), b, n),
-                potential(xz + float2(0, e), b, n) - potential(xz - float2(0, e), b, n)) / (2.0 * e);
+  return float2(potential(xz + float2(e, 0), b, n, s, ns) - potential(xz - float2(e, 0), b, n, s, ns),
+                potential(xz + float2(0, e), b, n, s, ns) - potential(xz - float2(0, e), b, n, s, ns)) / (2.0 * e);
 }
 
 float sphereHit(float3 ro, float3 rd, float3 c, float r) {
@@ -79,6 +92,12 @@ float segDist(float2 p, float2 a, float2 b, thread float& u) {
   float2 ab = b - a;
   u = clamp(dot(p - a, ab) / dot(ab, ab), 0.0, 1.0);
   return length(p - (a + ab * u));
+}
+
+float2 ringPoint(thread const Body& b, int k, float ang) {
+  float2 loc = float2(cos(ang) * b.ringA[k], sin(ang) * b.ringB[k]);
+  float cr = cos(b.rot), sr = sin(b.rot);
+  return b.pos.xz + float2(loc.x * cr - loc.y * sr, loc.x * sr + loc.y * cr);
 }
 
 float4 wp_main(float2 uv, constant Uniforms& u) {
@@ -102,22 +121,44 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     bodies[i].radius = 0.06 + m * 0.045;
     bodies[i].soft = bodies[i].radius * 2.6;
     bodies[i].pos = float3(xz.x, 0.0, xz.y);
-    float warm = hash11(k + 4.0);
     bodies[i].core = pal.coreWhite;
-    bodies[i].glow = mix(pal.glowA, pal.glowB, warm);
-    bool hasOrbit = hash11(k + 5.0) < 0.6;
-    bodies[i].orbitA = hasOrbit ? bodies[i].radius * (3.0 + hash11(k + 6.0) * 4.0) : 0.0;
-    bodies[i].orbitB = bodies[i].orbitA * (0.55 + hash11(k + 7.0) * 0.45);
-    bodies[i].orbitRot = hash11(k + 8.0) * 3.1416;
-    bodies[i].satellites = int(hash11(k + 9.0) * 4.0);
+    bodies[i].glow = mix(pal.glowA, pal.glowB, hash11(k + 4.0));
+    // 0-3 orbit rings, spaced outward; some bodies have none
+    float rr = hash11(k + 5.0);
+    bodies[i].rings = rr < 0.3 ? 0 : (rr < 0.6 ? 1 : (rr < 0.85 ? 2 : 3));
+    for (int q = 0; q < MAX_RINGS; q++) {
+      bodies[i].ringA[q] = bodies[i].radius * (3.0 + float(q) * 2.4 + hash11(k + 6.0 + float(q)) * 1.6);
+      bodies[i].ringB[q] = bodies[i].ringA[q] * (0.55 + hash11(k + 9.0 + float(q)) * 0.45);
+    }
+    bodies[i].rot = hash11(k + 8.0) * 3.1416;
     center += bodies[i].pos;
   }
   center /= float(n);
-  // settle each body just above the bottom of its own well
+
+  // satellites: 0-3 per ring, sharing rings, and they carry mass so they dent the sheet too
+  Sat sats[MAX_SATS];
+  int ns = 0;
   for (int i = 0; i < n; i++) {
-    bodies[i].pos.y = potential(bodies[i].pos.xz, bodies, n) + bodies[i].radius * 0.9;
+    for (int q = 0; q < bodies[i].rings; q++) {
+      float kq = S + float(i) * 13.7 + float(q) * 3.1;
+      float c = hash11(kq);
+      int count = c < 0.35 ? 0 : (c < 0.65 ? 1 : (c < 0.88 ? 2 : 3));
+      for (int s = 0; s < count && ns < MAX_SATS; s++) {
+        float ks = kq + float(s) * 1.7 + 0.5;
+        float2 xz = ringPoint(bodies[i], q, hash11(ks) * 6.2831853);
+        sats[ns].pos = float3(xz.x, 0.0, xz.y);
+        sats[ns].radius = 0.016 + hash11(ks + 1.0) * 0.02;
+        sats[ns].mass = 0.03 + hash11(ks + 2.0) * 0.06;
+        sats[ns].soft = sats[ns].radius * 4.5;
+        sats[ns].parent = i;
+        ns++;
+      }
+    }
   }
 
+  // settle everything just above the bottom of its own dent
+  for (int i = 0; i < n; i++) bodies[i].pos.y = potential(bodies[i].pos.xz, bodies, n, sats, ns) + bodies[i].radius * 0.9;
+  for (int i = 0; i < ns; i++) sats[i].pos.y = potential(sats[i].pos.xz, bodies, n, sats, ns) + sats[i].radius * 1.1;
   // camera: orbit the cluster, closer or farther by seed
   bool close = r1 < 0.4;
   float dist = close ? 3.2 + r2 * 2.5 : 7.5 + r2 * 6.0;
@@ -145,23 +186,15 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       float rim = pow(1.0 - max(0.0, dot(nrm, -rd)), 2.0);
       sphereCol = mix(bodies[i].core * 1.6, bodies[i].glow * 2.2, rim * 0.7);
     }
-    for (int s = 0; s < bodies[i].satellites; s++) {
-      float ks = S + float(i) * 13.7 + float(s) * 3.1;
-      float ang = hash11(ks) * 6.2831853;
-      float orbA = bodies[i].orbitA > 0.0 ? bodies[i].orbitA : bodies[i].radius * 4.0;
-      float orbB = bodies[i].orbitA > 0.0 ? bodies[i].orbitB : orbA * 0.8;
-      float2 loc = float2(cos(ang) * orbA, sin(ang) * orbB);
-      float cr = cos(bodies[i].orbitRot), sr = sin(bodies[i].orbitRot);
-      float2 xz = bodies[i].pos.xz + float2(loc.x * cr - loc.y * sr, loc.x * sr + loc.y * cr);
-      float sr2 = 0.018 + hash11(ks + 1.0) * 0.02;
-      float3 sp = float3(xz.x, potential(xz, bodies, n) + sr2 * 1.2, xz.y);
-      float t2 = sphereHit(ro, rd, sp, sr2);
-      if (t2 > 0.0 && t2 < tS) {
-        tS = t2;
-        float3 nrm = normalize(ro + rd * t2 - sp);
-        float lit = 0.35 + 0.65 * max(0.0, dot(nrm, normalize(bodies[i].pos - sp)));
-        sphereCol = mix(float3(0.55, 0.55, 0.6), bodies[i].glow, 0.3) * lit * 1.2;
-      }
+  }
+  for (int i = 0; i < ns; i++) {
+    float t = sphereHit(ro, rd, sats[i].pos, sats[i].radius);
+    if (t > 0.0 && t < tS) {
+      tS = t;
+      float3 nrm = normalize(ro + rd * t - sats[i].pos);
+      float3 parentPos = bodies[sats[i].parent].pos;
+      float lit = 0.35 + 0.65 * max(0.0, dot(nrm, normalize(parentPos - sats[i].pos)));
+      sphereCol = mix(float3(0.55, 0.55, 0.6), bodies[sats[i].parent].glow, 0.3) * lit * 1.2;
     }
   }
 
@@ -171,7 +204,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   for (int i = 0; i < 240; i++) {
     float3 q = ro + rd * t;
     if (q.y > 0.04 && rd.y > 0.0) break;
-    float dh = q.y - potential(q.xz, bodies, n);
+    float dh = q.y - potential(q.xz, bodies, n, sats, ns);
     if (dh < 0.0015) { hit = true; break; }
     tPrev = t;
     t += clamp(dh * 0.45, 0.004, 0.5);
@@ -182,7 +215,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     for (int i = 0; i < 6; i++) {
       float mid = 0.5 * (lo + hi);
       float3 q = ro + rd * mid;
-      if (q.y - potential(q.xz, bodies, n) < 0.0) hi = mid; else lo = mid;
+      if (q.y - potential(q.xz, bodies, n, sats, ns) < 0.0) hi = mid; else lo = mid;
     }
     t = 0.5 * (lo + hi);
   }
@@ -193,8 +226,8 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     t = tS;
   } else if (hit) {
     float3 q = ro + rd * t;
-    float h = potential(q.xz, bodies, n);
-    float2 g = gradient(q.xz, bodies, n);
+    float h = potential(q.xz, bodies, n, sats, ns);
+    float2 g = gradient(q.xz, bodies, n, sats, ns);
     float3 nrm = normalize(float3(-g.x, 1.0, -g.y));
     float facing = max(0.25, abs(dot(nrm, -rd)));
     float pixelWorld = t * 2.0 * tanHalf / u.res.y;
@@ -218,17 +251,15 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float crowd = 1.0 - smoothstep(0.28, 0.55, fw);
     float lw = pixelWorld * 1.3 / facing;
 
-    // orbit ellipses drawn on the surface
+    // orbit rings drawn on the surface
     float orbit = 0.0;
     for (int i = 0; i < n; i++) {
-      if (bodies[i].orbitA <= 0.0) continue;
       float2 d = q.xz - bodies[i].pos.xz;
-      float cr = cos(-bodies[i].orbitRot), sr = sin(-bodies[i].orbitRot);
+      float cr = cos(-bodies[i].rot), sr = sin(-bodies[i].rot);
       float2 loc = float2(d.x * cr - d.y * sr, d.x * sr + d.y * cr);
-      for (int k = 0; k < 2; k++) {
-        float a = bodies[i].orbitA * (1.0 + float(k) * 0.22), b = bodies[i].orbitB * (1.0 + float(k) * 0.18);
-        float rr = length(loc / float2(a, b));
-        float dist = abs(rr - 1.0) * min(a, b);
+      for (int k = 0; k < bodies[i].rings; k++) {
+        float a = bodies[i].ringA[k], b = bodies[i].ringB[k];
+        float dist = abs(length(loc / float2(a, b)) - 1.0) * min(a, b);
         orbit = max(orbit, 1.0 - smoothstep(0.4 * lw, 1.4 * lw, dist));
       }
     }
