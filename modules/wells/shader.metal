@@ -1,6 +1,8 @@
 // gravity wells, after mjmurdoc: a gravitational potential surface raymarched in perspective,
 // isolines drawn on the surface, colour ramped by depth so each bowl glows from its floor,
 // emissive bodies, near-massless satellites, orbit rings and a dashed web as real 3D curves.
+// two passes: wp_main renders linear colour with the ray depth in alpha; wp_post applies depth
+// of field, then the screen-space callouts, then vignette, tonemap and grain.
 
 #define MAX_BODIES 7
 #define MAX_RINGS 3
@@ -19,6 +21,10 @@
 // `--set three=1` forces the two-body / lagrange scene, `three=0` the n-body cluster; negative = seeded
 #ifndef WP_PARAM_three
 #define WP_PARAM_three -1.0
+#endif
+// `--set dof=0` turns depth of field off, `dof=1` is the strongest; negative = seeded by shot
+#ifndef WP_PARAM_dof
+#define WP_PARAM_dof -1.0
 #endif
 
 struct Body {
@@ -179,16 +185,32 @@ void dashedString(float3 ro, float3 rd, float3 a, float3 b, float tLimit, float 
   }
 }
 
-float4 wp_main(float2 uv, constant Uniforms& u) {
-  float aspect = u.res.x / u.res.y;
-  float S = u.seed;
+// everything both passes need to agree on: the bodies, the frame, the lagrange points, the camera.
+// built from the seed alone, so wp_post can rebuild it without a side channel
+// scalars only: bodies, satellites, lagrange points and critical heights are written into
+// caller-owned arrays. (a version that carried the arrays inside the struct and returned it by
+// value came back with corrupted bodies and per-pixel-inconsistent lagrange points — pointers
+// into a large struct local in a metal fragment function are not to be trusted)
+struct Scene {
+  int n, ns;
+  Frame fr;
+  bool three, graze, close;
+  Palette pal;
+  float3 center, ro, fwd, right, up;
+  float aspect, tanHalf, dist, pxPerUnit, fogRate, dof, focus;
+};
+
+Scene buildScene(float S, float2 res, thread Body* bodies, thread Sat* sats, thread float2* lag, thread float* critH) {
+  Scene sc = {};
+  for (int i = 0; i < 5; i++) lag[i] = 0.0;
+  for (int i = 0; i < 3; i++) critH[i] = 0.0;
+  float aspect = res.x / res.y;
   float r0 = hash11(S), r1 = hash11(S + 1.0), r2 = hash11(S + 2.0), r3 = hash11(S + 3.0);
 
   Palette pal = palette(int(hash11(S + 4.0) * 5.0) % 5);
 
   // bodies: a loose cluster, one of them often dominant
   int n = 3 + int(hash11(S + 5.0) * 5.0);
-  Body bodies[MAX_BODIES];
   float3 center = 0.0;
   for (int i = 0; i < n; i++) {
     float k = float(i) * 7.31 + S;
@@ -213,7 +235,6 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   center /= float(n);
 
   // satellites: 0-3 per ring, sharing rings. nearly massless — a shallow dimple, never a pit
-  Sat sats[MAX_SATS];
   int ns = 0;
   for (int i = 0; i < n; i++) {
     for (int q = 0; q < bodies[i].rings; q++) {
@@ -240,8 +261,6 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   bool three = WP_PARAM_three >= 0.0 ? WP_PARAM_three > 0.5 : hash11(S + 13.0) < 0.3;
   Frame fr;
   fr.bary = 0.0; fr.w2 = 0.0; fr.phi0 = 0.0;
-  float2 lag[5];
-  float critH[3];
   if (three) {
     n = 2;
     ns = 0;
@@ -357,13 +376,51 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   float3 up = cross(right, fwd);
   float fov = close ? 0.62 : 0.55;
   float tanHalf = tan(fov * 0.5);
-  float2 p = (uv - 0.5) * 2.0 * float2(aspect, 1.0) * tanHalf;
-  float3 rd = normalize(fwd + right * p.x + up * p.y);
-  float pxPerUnit = u.res.y / (2.0 * tanHalf);   // world -> pixels at distance 1
+  float pxPerUnit = res.y / (2.0 * tanHalf);   // world -> pixels at distance 1
   // fog in proportion to the shot: a grazing camera a few units out wants the distance gone
   // much sooner than a high one, or far bowls' hot floors show through edge-on as pale streaks
   float fogRate = max(0.055, 0.4 / dist);
-  float camDist = dist;   // the orbit loop shadows `dist`
+  // depth of field, strongest on the grazing shots where it reads as macro
+  float rd0 = hash11(S + 20.0);
+  float dof = WP_PARAM_dof >= 0.0 ? WP_PARAM_dof : (graze ? 0.7 + rd0 * 0.3 : (close ? 0.3 + rd0 * 0.4 : 0.15 + rd0 * 0.3));
+  // focus on the subject: the body nearest the centre of the frame, not the camera's target point
+  float focus = dist, bestOff = 1e9;
+  for (int i = 0; i < n; i++) {
+    float3 v = bodies[i].pos - ro;
+    float z = dot(v, fwd);
+    if (z <= 0.1) continue;
+    float2 sp = float2(dot(v, right), dot(v, up)) / (z * tanHalf);
+    float off = length(sp / float2(aspect, 1.0));
+    if (off < bestOff) { bestOff = off; focus = length(v); }
+  }
+  sc.focus = focus;
+
+  sc.n = n; sc.ns = ns; sc.fr = fr;
+  sc.three = three; sc.graze = graze; sc.close = close;
+  sc.pal = pal;
+  sc.center = center; sc.ro = ro; sc.fwd = fwd; sc.right = right; sc.up = up;
+  sc.aspect = aspect; sc.tanHalf = tanHalf; sc.dist = dist; sc.pxPerUnit = pxPerUnit; sc.fogRate = fogRate; sc.dof = dof;
+  return sc;
+}
+
+// the render code below reads the scene through these names (the arrays are the caller's)
+#define UNPACK_SCENE(sc) \
+  int n = sc.n, ns = sc.ns; Frame fr = sc.fr; \
+  bool three = sc.three, graze = sc.graze; \
+  Palette pal = sc.pal; float3 center = sc.center, ro = sc.ro, fwd = sc.fwd, right = sc.right, up = sc.up; \
+  float aspect = sc.aspect, tanHalf = sc.tanHalf, dist = sc.dist, pxPerUnit = sc.pxPerUnit, fogRate = sc.fogRate; \
+  float camDist = dist;   /* the orbit loop shadows `dist` */
+
+float4 wp_main(float2 uv, constant Uniforms& u) {
+  float S = u.seed;
+  Body bodies[MAX_BODIES];
+  Sat sats[MAX_SATS];
+  float2 lag[5];
+  float critH[3];
+  Scene sc = buildScene(S, u.res, bodies, sats, lag, critH);
+  UNPACK_SCENE(sc)
+  float2 p = (uv - 0.5) * 2.0 * float2(aspect, 1.0) * tanHalf;
+  float3 rd = normalize(fwd + right * p.x + up * p.y);
 
   // spheres first: bodies and their satellites
   float tS = 1e9, sphereCov = 0.0;
@@ -573,11 +630,56 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     col += (bodies[i].core * tight * 0.35 + pal.hot * wide * 0.04 * bodies[i].mass) * fade;
   }
 
+  // linear colour out, and the ray depth in alpha for the second pass. the sky is simply far
+  float depth = sphereFront ? tS : (hit ? t : 400.0);
+  return float4(col, depth);
+}
+
+// circle of confusion, in pixels, for a point at ray depth d: sharp at the camera's target,
+// fully blurred beyond about half again as far or near
+float cocRadius(float d, float focus, float maxCoc) {
+  return maxCoc * min(1.0, abs(d - focus) / (0.6 * focus));
+}
+
+float4 wp_post(float2 uv, texture2d<float> scene, constant Uniforms& u) {
+  float S = u.seed;
+  Body bodies[MAX_BODIES];
+  Sat sats[MAX_SATS];
+  float2 lag[5];
+  float critH[3];
+  Scene sc = buildScene(S, u.res, bodies, sats, lag, critH);
+  UNPACK_SCENE(sc)
+  float2 px = uv * u.res;
+
+  // depth of field as a gather over a per-pixel rotated spiral (the undersampling becomes grain,
+  // which suits the print). a tap counts if its own circle of confusion reaches this pixel and it
+  // isn't behind us, or if this pixel's own circle reaches the tap — so blurred background never
+  // bleeds over a sharp foreground, while a blurred foreground does spill over what's behind it
+  float4 c0 = wp_scene(scene, uv);
+  float focus = sc.focus;
+  float maxCoc = u.res.y / 70.0 * sc.dof;
+  float coc0 = cocRadius(c0.a, focus, maxCoc);
+  float3 acc = c0.rgb;
+  float wsum = 1.0;
+  float rot = hash21(px + S) * 6.2831853;
+  const int N = 40;
+  for (int i = 0; i < N; i++) {
+    float r = sqrt((float(i) + 0.5) / float(N));
+    float a = float(i) * 2.39996323 + rot;
+    float2 off = float2(cos(a), sin(a)) * r * maxCoc;
+    float4 c = wp_scene(scene, uv + off / u.res);
+    float cocT = cocRadius(c.a, focus, maxCoc) * step(c.a, c0.a * 1.05);
+    float dpx = length(off);
+    float w = smoothstep(dpx - 1.0, dpx + 1.0, max(coc0, cocT));
+    acc += c.rgb * w;
+    wsum += w;
+  }
+  float3 col = acc / wsum;
+
   // callouts: a ring on each lagrange point, a 45° leader, and its name in the pixel font —
-  // screen-space UI, constant size, hidden where the sheet is in the way
+  // screen-space UI, constant size, hidden where the sheet is in the way. drawn after the blur
   if (three) {
     float cell = max(3.0, round(u.res.y / 480.0));
-    float2 px = uv * u.res;
     float ui = 0.0;
     for (int k = 0; k < 5; k++) {
       float3 wp = float3(lag[k].x, potential(lag[k], bodies, n, sats, ns, fr) + 0.02, lag[k].y);
