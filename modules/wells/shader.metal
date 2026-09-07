@@ -119,7 +119,8 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     if (i == 0 && r0 < 0.5) m = 1.6 + hash11(k + 3.5) * 1.0;
     bodies[i].mass = m;
     bodies[i].radius = 0.06 + m * 0.045;
-    bodies[i].soft = bodies[i].radius * 2.6;
+    // wide bowls rather than funnels: the body should sit visibly in its well
+    bodies[i].soft = bodies[i].radius * 5.5;
     bodies[i].pos = float3(xz.x, 0.0, xz.y);
     bodies[i].core = pal.coreWhite;
     bodies[i].glow = mix(pal.glowA, pal.glowB, hash11(k + 4.0));
@@ -221,7 +222,8 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   }
 
   float3 col;
-  if (tS < t || (!hit && tS < 1e8)) {
+  bool sphereFront = tS < t || (!hit && tS < 1e8);
+  if (sphereFront) {
     col = sphereCol;
     t = tS;
   } else if (hit) {
@@ -232,14 +234,17 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float facing = max(0.25, abs(dot(nrm, -rd)));
     float pixelWorld = t * 2.0 * tanHalf / u.res.y;
 
-    // the sheet itself: dark, lit faintly from above, and by each body's glow into its well
+    // the sheet itself: dark, lit faintly from above, and by each body as a point light in its
+    // well — a lambert term, so walls that face the body glow and the flat sheet beyond the rim
+    // (which faces away from a body sitting below it) stays dark
     float lambert = max(0.0, dot(nrm, normalize(float3(0.3, 1.0, 0.25))));
     col = pal.bg * (0.4 + 0.5 * lambert);
-    // each body lights its own well and little else: tight falloff with a hard-ish cutoff
     for (int i = 0; i < n; i++) {
-      float rr = length(q - bodies[i].pos);
-      float glow = bodies[i].mass / (rr * rr * 28.0 + 0.10) * exp(-rr * 1.6);
-      col += bodies[i].glow * min(glow * 0.035, 0.22);
+      float3 L = bodies[i].pos - q;
+      float rr = length(L);
+      float face = max(0.0, dot(nrm, L / rr));
+      float glow = bodies[i].mass / (rr * rr * 18.0 + 0.10) * exp(-rr * 1.4) * face;
+      col += bodies[i].glow * min(glow * 0.12, 0.4);
     }
 
     // isolines of the potential, constant width in screen pixels
@@ -292,7 +297,9 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     col = pal.bg * 0.3;
   }
 
-  // bloom: screen-space halos around every body, tight core plus a wide soft one
+  // bloom: screen-space halos around every body — but only where the body isn't behind the
+  // sheet at this pixel. light doesn't shine through the ground
+  float tFwd = t * dot(rd, fwd);
   for (int i = 0; i < n; i++) {
     float3 v = bodies[i].pos - ro;
     float z = dot(v, fwd);
@@ -301,6 +308,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float2 spx = (sp / float2(aspect, 1.0) * 0.5 + 0.5) * u.res;
     float dpx = length(uv * u.res - spx);
     float rpx = bodies[i].radius / (z * tanHalf) * u.res.y * 0.5;
+    if ((hit || sphereFront) && tFwd < z - bodies[i].radius * 1.5) continue;
     float tight = 1.0 / (1.0 + pow(dpx / max(rpx * 0.9, 2.0), 2.0));
     float wide = 1.0 / (1.0 + pow(dpx / max(rpx * 3.0, 6.0), 3.0));
     col += bodies[i].core * tight * 0.35 + bodies[i].glow * wide * 0.04 * bodies[i].mass;
