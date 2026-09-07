@@ -264,7 +264,10 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     t = 0.5 * (lo + hi);
   }
 
-  float3 sky = pal.bg * 0.3;
+  // the sky is exactly the flat sheet's colour and the sheet fogs into it, so the sheet reads
+  // as going on forever rather than ending at a horizon
+  float3 sunDir = normalize(float3(0.3, 1.0, 0.25));
+  float3 sky = pal.bg * (0.5 + 0.5 * sunDir.y);
   float3 col = sky;
   bool sphereFront = tS < t || (!hit && tS < 1e8);
   float tLimit = sphereFront ? tS : (hit ? t : 1e9);
@@ -291,7 +294,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       depth += w * w * w * w;
     }
     depth = pow(depth, 0.25);
-    float lambert = max(0.0, dot(nrm, normalize(float3(0.3, 1.0, 0.25))));
+    float lambert = max(0.0, dot(nrm, sunDir));
     col = pal.bg * (0.5 + 0.5 * lambert);
     col = mix(col, pal.warm, smoothstep(0.25, 0.6, depth));
     col = mix(col, pal.hot, smoothstep(0.6, 1.0, depth) * 0.85);
@@ -307,9 +310,10 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float3 lineCol = mix(pal.line, pal.lineHot, smoothstep(0.2, 0.6, depth));
     lineCol = mix(lineCol, pal.warm * 0.7, smoothstep(0.7, 1.0, depth));
 
-    // optional disc edge: the sheet fades to nothing past a radius
+    // optional disc edge: the sheet fades to nothing past a radius. not on grazing shots, where
+    // the void past the rim would sit under a sheet-coloured sky
     float edge = 1.0;
-    if (hash11(S + 9.0) < 0.55) {
+    if (!graze && hash11(S + 9.0) < 0.55) {
       float R = 5.0 + hash11(S + 10.0) * 4.0;
       edge = 1.0 - smoothstep(R - 1.8, R + 0.3, length(q.xz - center.xz));
     }
@@ -317,7 +321,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
 
     col = mix(col, lineCol, line * crowd * pal.lineAlpha * fog);
     col *= edge;
-    col = mix(col, pal.bg * 0.35, 1.0 - fog);
+    col = mix(col, sky, 1.0 - fog);
   }
 
   // orbit rings: ellipses floating in a horizontal plane, hidden wherever the sheet is nearer
