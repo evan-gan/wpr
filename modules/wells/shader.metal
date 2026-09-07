@@ -25,7 +25,7 @@ struct Body {
   float3 core;     // emissive sphere color
   float3 glow;     // color it throws onto the well walls
   int rings;       // orbit ellipses drawn on the surface around it
-  float ringA[MAX_RINGS], ringB[MAX_RINGS];
+  float ringA[MAX_RINGS], ringB[MAX_RINGS], ringY[MAX_RINGS];
   float rot;
 };
 
@@ -98,17 +98,22 @@ float sphereHit(float3 ro, float3 rd, float3 c, float r) {
   return t > 0.0 ? t : -1.0;
 }
 
-// distance from p to segment ab, and the parameter along it
-float segDist(float2 p, float2 a, float2 b, thread float& u) {
-  float2 ab = b - a;
-  u = clamp(dot(p - a, ab) / dot(ab, ab), 0.0, 1.0);
-  return length(p - (a + ab * u));
-}
-
 float2 ringPoint(thread const Body& b, int k, float ang) {
   float2 loc = float2(cos(ang) * b.ringA[k], sin(ang) * b.ringB[k]);
   float cr = cos(b.rot), sr = sin(b.rot);
   return b.pos.xz + float2(loc.x * cr - loc.y * sr, loc.x * sr + loc.y * cr);
+}
+
+// closest approach between the ray and segment ab: returns the distance, with the ray and
+// segment parameters through out-params
+float raySegment(float3 ro, float3 rd, float3 a, float3 b, thread float& s, thread float& u) {
+  float3 ab = b - a, ao = ro - a;
+  float bb = dot(rd, ab), c = dot(ab, ab), d = dot(rd, ao), e = dot(ab, ao);
+  float denom = max(c - bb * bb, 1e-6);
+  u = clamp((e - bb * d) / denom, 0.0, 1.0);
+  float3 p = a + ab * u;
+  s = max(dot(p - ro, rd), 0.0);
+  return length(ro + rd * s - p);
 }
 
 float4 wp_main(float2 uv, constant Uniforms& u) {
@@ -167,9 +172,28 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       }
     }
   }
-  // settle everything just above the bottom of its own dent
-  for (int i = 0; i < n; i++) bodies[i].pos.y = potential(bodies[i].pos.xz, bodies, n, sats, ns) + bodies[i].radius * 0.9;
-  for (int i = 0; i < ns; i++) sats[i].pos.y = potential(sats[i].pos.xz, bodies, n, sats, ns) + sats[i].radius * 1.1;
+  // bodies settle just above the floor of their own bowl; each ring floats a little above the
+  // sheet at its own extent, so it rests in the bowl instead of tunnelling through the wall
+  for (int i = 0; i < n; i++) {
+    bodies[i].pos.y = potential(bodies[i].pos.xz, bodies, n, sats, ns) + bodies[i].radius * 0.9;
+    for (int q = 0; q < MAX_RINGS; q++) {
+      float2 far = ringPoint(bodies[i], q, 0.0);
+      bodies[i].ringY[q] = potential(far, bodies, n, sats, ns) + 0.03;
+    }
+  }
+  for (int i = 0; i < ns; i++) {
+    // find the ring this satellite was placed on and sit on it
+    int p = sats[i].parent;
+    float best = 1e9, y = 0.0;
+    for (int q = 0; q < bodies[p].rings; q++) {
+      float2 d = sats[i].pos.xz - bodies[p].pos.xz;
+      float cr = cos(-bodies[p].rot), sr = sin(-bodies[p].rot);
+      float2 loc = float2(d.x * cr - d.y * sr, d.x * sr + d.y * cr);
+      float err = abs(length(loc / float2(bodies[p].ringA[q], bodies[p].ringB[q])) - 1.0);
+      if (err < best) { best = err; y = bodies[p].ringY[q]; }
+    }
+    sats[i].pos.y = y + sats[i].radius;
+  }
 
   // camera: orbit the cluster, closer or farther by seed
   bool close = r1 < 0.4;
@@ -186,6 +210,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   float tanHalf = tan(fov * 0.5);
   float2 p = (uv - 0.5) * 2.0 * float2(aspect, 1.0) * tanHalf;
   float3 rd = normalize(fwd + right * p.x + up * p.y);
+  float pxPerUnit = u.res.y / (2.0 * tanHalf);   // world -> pixels at distance 1
 
   // spheres first: bodies and their satellites
   float tS = 1e9;
@@ -234,6 +259,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
 
   float3 col;
   bool sphereFront = tS < t || (!hit && tS < 1e8);
+  float tLimit = sphereFront ? tS : (hit ? t : 1e9);
   if (sphereFront) {
     col = sphereCol;
     t = tS;
@@ -243,7 +269,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float2 g = gradient(q.xz, bodies, n, sats, ns);
     float3 nrm = normalize(float3(-g.x, 1.0, -g.y));
     float facing = max(0.25, abs(dot(nrm, -rd)));
-    float pixelWorld = t * 2.0 * tanHalf / u.res.y;
+    float pixelWorld = t / pxPerUnit;
 
     // the sheet itself: dark, lit faintly from above, and by each body as a point light in its
     // well — a lambert term, so walls that face the body glow and the flat sheet beyond the rim
@@ -267,34 +293,6 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float crowd = 1.0 - smoothstep(0.28, 0.55, fw);
     float lw = pixelWorld * 1.3 / facing;
 
-    // orbit rings drawn on the surface
-    float orbit = 0.0;
-    for (int i = 0; i < n; i++) {
-      float2 d = q.xz - bodies[i].pos.xz;
-      float cr = cos(-bodies[i].rot), sr = sin(-bodies[i].rot);
-      float2 loc = float2(d.x * cr - d.y * sr, d.x * sr + d.y * cr);
-      for (int k = 0; k < bodies[i].rings; k++) {
-        float a = bodies[i].ringA[k], b = bodies[i].ringB[k];
-        float dist = abs(length(loc / float2(a, b)) - 1.0) * min(a, b);
-        orbit = max(orbit, 1.0 - smoothstep(0.4 * lw, 1.4 * lw, dist));
-      }
-    }
-
-    // dashed web: each body links to its nearest earlier body, so edges stay short and don't pile up
-    float dash = 0.0;
-    for (int i = 1; i < n; i++) {
-      int j = 0;
-      float best = 1e9;
-      for (int k = 0; k < i; k++) {
-        float dk = length(bodies[i].pos.xz - bodies[k].pos.xz);
-        if (dk < best) { best = dk; j = k; }
-      }
-      float uu;
-      float dist = segDist(q.xz, bodies[i].pos.xz, bodies[j].pos.xz, uu);
-      float on = step(fract(uu * best / 0.22), 0.55);
-      dash = max(dash, (1.0 - smoothstep(0.4 * lw, 1.4 * lw, dist)) * on);
-    }
-
     // optional disc edge: the sheet fades to nothing past a radius
     float edge = 1.0;
     if (hash11(S + 9.0) < 0.55) {
@@ -304,13 +302,51 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float fog = exp(-t * 0.055);
 
     col = mix(col, pal.line, line * crowd * pal.lineAlpha * fog);
-    col = mix(col, pal.orbit, orbit * 0.9 * fog);
-    col = mix(col, pal.dash, dash * 0.85 * fog);
     col *= edge;
     col = mix(col, pal.bg * 0.35, 1.0 - fog);
   } else {
     col = pal.bg * 0.3;
   }
+
+  // orbit rings: ellipses floating in a horizontal plane, hidden wherever the sheet is nearer
+  float orbit = 0.0, orbitFog = 1.0;
+  for (int i = 0; i < n; i++) {
+    float cr = cos(-bodies[i].rot), sr = sin(-bodies[i].rot);
+    for (int k = 0; k < bodies[i].rings; k++) {
+      if (abs(rd.y) < 1e-4) continue;
+      float tp = (bodies[i].ringY[k] - ro.y) / rd.y;
+      if (tp <= 0.0 || tp > tLimit) continue;
+      float2 d = (ro + rd * tp).xz - bodies[i].pos.xz;
+      float2 loc = float2(d.x * cr - d.y * sr, d.x * sr + d.y * cr);
+      float a = bodies[i].ringA[k], b = bodies[i].ringB[k];
+      float dist = abs(length(loc / float2(a, b)) - 1.0) * min(a, b);
+      float lw = tp / pxPerUnit * 1.3 / sqrt(max(abs(rd.y), 0.05));
+      float cov = 1.0 - smoothstep(0.4 * lw, 1.4 * lw, dist);
+      if (cov > orbit) { orbit = cov; orbitFog = exp(-tp * 0.055); }
+    }
+  }
+  col = mix(col, pal.orbit, orbit * 0.9 * orbitFog);
+
+  // dashed web: straight segments between bodies, each linked to its nearest earlier body
+  float dash = 0.0, dashFog = 1.0;
+  for (int i = 1; i < n; i++) {
+    int j = 0;
+    float best = 1e9;
+    for (int k = 0; k < i; k++) {
+      float dk = length(bodies[i].pos.xz - bodies[k].pos.xz);
+      if (dk < best) { best = dk; j = k; }
+    }
+    float3 a = bodies[i].pos + float3(0, bodies[i].radius * 0.6, 0);
+    float3 b = bodies[j].pos + float3(0, bodies[j].radius * 0.6, 0);
+    float s, uu;
+    float dist = raySegment(ro, rd, a, b, s, uu);
+    if (s > tLimit) continue;
+    float lw = s / pxPerUnit * 1.3;
+    float on = step(fract(uu * best / 0.22), 0.55);
+    float cov = (1.0 - smoothstep(0.4 * lw, 1.4 * lw, dist)) * on;
+    if (cov > dash) { dash = cov; dashFog = exp(-s * 0.055); }
+  }
+  col = mix(col, pal.dash, dash * 0.85 * dashFog);
 
   // bloom: screen-space halos around every body the camera can actually see. a lens halo is all
   // or nothing — so the test is a shadow ray from the camera to the body, not a per-pixel depth
