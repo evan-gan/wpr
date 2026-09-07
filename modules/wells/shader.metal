@@ -118,6 +118,20 @@ float raySegment(float3 ro, float3 rd, float3 a, float3 b, thread float& s, thre
   return length(ro + rd * s - p);
 }
 
+// a 5x7 pixel font with just enough glyphs for "L1".."L5": rows top to bottom, bit 4 is the left column
+constant int WP_FONT[6][7] = {
+  {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F},   // L
+  {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},   // 1
+  {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F},   // 2
+  {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E},   // 3
+  {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02},   // 4
+  {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E},   // 5
+};
+
+float glyphPx(int g, int2 c) {
+  if (c.x < 0 || c.x > 4 || c.y < 0 || c.y > 6) return 0.0;
+  return float((WP_FONT[g][c.y] >> (4 - c.x)) & 1);
+}
 
 // how much of a line-type mark survives at distance t: the sheet's fog, and then gone entirely
 // past a couple of camera distances — a grazing camera sees the far wall of its own bowl with
@@ -203,6 +217,37 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       if (err < best) { best = err; y = bodies[p].ringY[q]; }
     }
     sats[i].pos.y = y + sats[i].radius;
+  }
+
+  // lagrange points of one pair — the heaviest body with one of its satellites, or with its
+  // nearest neighbour — from the restricted three-body approximations
+  bool callouts = hash11(S + 12.0) < 0.6;
+  float2 lag[5];
+  {
+    int big = 0;
+    for (int i = 1; i < n; i++) if (bodies[i].mass > bodies[big].mass) big = i;
+    float2 P = bodies[big].pos.xz, Q = 0.0;
+    float M = bodies[big].mass, m = 0.0;
+    int sat = -1;
+    for (int i = 0; i < ns; i++) if (sats[i].parent == big) { sat = i; break; }
+    if (sat >= 0) {
+      Q = sats[sat].pos.xz; m = sats[sat].mass;
+    } else {
+      float best = 1e9;
+      for (int i = 0; i < n; i++) {
+        float d = length(bodies[i].pos.xz - P);
+        if (i != big && d < best) { best = d; Q = bodies[i].pos.xz; m = bodies[i].mass; }
+      }
+    }
+    float2 dv = Q - P;
+    float R = length(dv);
+    float2 dir = dv / R, perp = float2(-dir.y, dir.x);
+    float hill = R * pow(m / (3.0 * M), 1.0 / 3.0);
+    lag[0] = Q - dir * hill;
+    lag[1] = Q + dir * hill;
+    lag[2] = P - dir * R * (1.0 + 5.0 * m / (12.0 * M));
+    lag[3] = P + (dir * 0.5 + perp * 0.8660254) * R;
+    lag[4] = P + (dir * 0.5 - perp * 0.8660254) * R;
   }
 
   // camera: far and high over the cluster, close and medium, or grazing — down at the sheet
@@ -417,6 +462,50 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float tight = 1.0 / (1.0 + pow(dpx / max(rpx * 0.9, 2.0), 2.0));
     float wide = 1.0 / (1.0 + pow(dpx / max(rpx * 3.0, 6.0), 3.0));
     col += (bodies[i].core * tight * 0.35 + pal.hot * wide * 0.04 * bodies[i].mass) * fade;
+  }
+
+  // callouts: a ring on each lagrange point, a 45° leader, and its name in the pixel font —
+  // screen-space UI, constant size, hidden where the sheet is in the way
+  if (callouts) {
+    float cell = max(3.0, round(u.res.y / 480.0));
+    float2 px = uv * u.res;
+    float ui = 0.0;
+    for (int k = 0; k < 5; k++) {
+      float3 wp = float3(lag[k].x, potential(lag[k], bodies, n, sats, ns) + 0.02, lag[k].y);
+      float3 v = wp - ro;
+      float z = dot(v, fwd);
+      if (z <= 0.1) continue;
+      float2 sp = float2(dot(v, right), dot(v, up)) / (z * tanHalf);
+      float2 m = (sp / float2(aspect, 1.0) * 0.5 + 0.5) * u.res;
+      if (any(m < 0.0) || any(m > u.res)) continue;
+      float2 d = px - m;
+      if (dot(d, d) > 200.0 * 200.0) continue;
+      float len = length(v);
+      float3 dir = v / len;
+      bool visible = true;
+      for (int s = 1; s < 40; s++) {
+        float tt = len * float(s) / 40.0;
+        if (tt > len - 0.03) break;
+        float3 q = ro + dir * tt;
+        if (q.y < potential(q.xz, bodies, n, sats, ns)) { visible = false; break; }
+      }
+      if (!visible) continue;
+      float ring = 1.0 - smoothstep(0.8, 1.8, abs(length(d) - 5.0));
+      float2 a = m + 3.5, b = m + 26.0;
+      float2 ab = b - a;
+      float along = clamp(dot(px - a, ab) / dot(ab, ab), 0.0, 1.0);
+      float leader = 1.0 - smoothstep(0.6, 1.4, length(px - (a + ab * along)));
+      float2 o = floor(b) + float2(4.0, -3.0);   // label's bottom-left, pixel aligned
+      int2 c = int2(floor((px - o) / cell));      // c.y counts up from the baseline
+      float text = 0.0;
+      if (c.y >= 0 && c.y < 7) {
+        int row = 6 - c.y;
+        if (c.x >= 0 && c.x < 5) text = glyphPx(0, int2(c.x, row));
+        else if (c.x >= 6 && c.x < 11) text = glyphPx(k + 1, int2(c.x - 6, row));
+      }
+      ui = max(ui, max(ring, max(leader, text)));
+    }
+    col = mix(col, pal.line * 1.5, ui * 0.9);
   }
 
   col *= 1.0 - 0.3 * dot(uv - 0.5, uv - 0.5);
