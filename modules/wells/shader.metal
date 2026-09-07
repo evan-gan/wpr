@@ -194,13 +194,14 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     sats[i].pos.y = y + sats[i].radius;
   }
 
-  // camera: orbit the cluster, closer or farther by seed
-  bool close = r1 < 0.4;
-  float dist = WP_PARAM_dist >= 0.0 ? WP_PARAM_dist : (close ? 3.2 + r2 * 2.5 : 7.5 + r2 * 6.0);
-  float el = WP_PARAM_el >= 0.0 ? WP_PARAM_el : (close ? 0.32 : 0.42) + r3 * 0.36;
+  // camera: far and high over the cluster, close and medium, or grazing — down at the sheet
+  // with bodies clipping the horizon
+  bool graze = r1 < 0.25, close = r1 < 0.55;
+  float dist = WP_PARAM_dist >= 0.0 ? WP_PARAM_dist : (graze ? 2.6 + r2 * 2.0 : close ? 3.2 + r2 * 2.5 : 7.5 + r2 * 6.0);
+  float el = WP_PARAM_el >= 0.0 ? WP_PARAM_el : (graze ? 0.07 + r3 * 0.13 : (close ? 0.22 : 0.42) + r3 * 0.36);
   float az = WP_PARAM_az >= 0.0 ? WP_PARAM_az : hash11(S + 6.0) * 6.2831853;
   float3 target = center + float3(hash11(S + 7.0) - 0.5, 0.0, hash11(S + 8.0) - 0.5) * (close ? 2.5 : 1.0);
-  target.y = close ? -0.4 : -0.2;
+  target.y = graze ? -0.3 : (close ? -0.4 : -0.2);
   float3 ro = target + dist * float3(cos(el) * sin(az), sin(el), cos(el) * cos(az));
   float3 fwd = normalize(target - ro);
   float3 right = normalize(cross(fwd, float3(0, 1, 0)));
