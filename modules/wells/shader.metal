@@ -336,7 +336,8 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   }
   col = mix(col, pal.orbit, orbit * 0.9 * orbitFog);
 
-  // dashed web: straight segments between bodies, each linked to its nearest earlier body
+  // dashed web: a string laid from each body to its nearest earlier body — straight where it can
+  // be, draped over the sheet where the straight line would cut through the ridge between bowls
   float dash = 0.0, dashFog = 1.0;
   for (int i = 1; i < n; i++) {
     int j = 0;
@@ -348,12 +349,21 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float3 a = bodies[i].pos + float3(0, bodies[i].radius * 0.6, 0);
     float3 b = bodies[j].pos + float3(0, bodies[j].radius * 0.6, 0);
     float s, uu;
-    float dist = raySegment(ro, rd, a, b, s, uu);
-    if (s > tLimit) continue;
-    float lw = s / pxPerUnit * 1.3;
-    float on = step(fract(uu * best / 0.22), 0.55);
-    float cov = (1.0 - smoothstep(0.4 * lw, 1.4 * lw, dist)) * on;
-    if (cov > dash) { dash = cov; dashFog = exp(-s * 0.055); }
+    if (raySegment(ro, rd, a, b, s, uu) > 2.0) continue;   // the drape lifts it, but not that far
+    const int K = 24;
+    float3 prev = a;
+    for (int k = 1; k <= K; k++) {
+      float3 c = mix(a, b, float(k) / float(K));
+      c.y = max(c.y, potential(c.xz, bodies, n, sats, ns) + 0.025);
+      float d = raySegment(ro, rd, prev, c, s, uu);
+      float along = (float(k - 1) + uu) / float(K);
+      prev = c;
+      if (s > tLimit) continue;
+      float lw = s / pxPerUnit * 1.3;
+      float on = step(fract(along * best / 0.22), 0.55);
+      float cov = (1.0 - smoothstep(0.4 * lw, 1.4 * lw, d)) * on;
+      if (cov > dash) { dash = cov; dashFog = exp(-s * 0.055); }
+    }
   }
   col = mix(col, pal.dash, dash * 0.85 * dashFog);
 
