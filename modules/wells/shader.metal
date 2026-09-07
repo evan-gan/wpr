@@ -308,6 +308,12 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float3 v = bodies[i].pos - ro;
     float z = dot(v, fwd);
     if (z <= 0.1) continue;
+    float2 sp = float2(dot(v, right), dot(v, up)) / (z * tanHalf);
+    float2 spx = (sp / float2(aspect, 1.0) * 0.5 + 0.5) * u.res;
+    float dpx = length(uv * u.res - spx);
+    float rpx = bodies[i].radius / (z * tanHalf) * u.res.y * 0.5;
+    // the shadow ray is the same answer for every pixel; only pay for it where the halo reaches
+    if (dpx > max(rpx * 14.0, 40.0)) continue;
     float len = length(v);
     float3 dir = v / len;
     bool visible = true;
@@ -318,10 +324,6 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       if (q.y < potential(q.xz, bodies, n, sats, ns)) { visible = false; break; }
     }
     if (!visible) continue;
-    float2 sp = float2(dot(v, right), dot(v, up)) / (z * tanHalf);
-    float2 spx = (sp / float2(aspect, 1.0) * 0.5 + 0.5) * u.res;
-    float dpx = length(uv * u.res - spx);
-    float rpx = bodies[i].radius / (z * tanHalf) * u.res.y * 0.5;
     float tight = 1.0 / (1.0 + pow(dpx / max(rpx * 0.9, 2.0), 2.0));
     float wide = 1.0 / (1.0 + pow(dpx / max(rpx * 3.0, 6.0), 3.0));
     col += bodies[i].core * tight * 0.35 + bodies[i].glow * wide * 0.04 * bodies[i].mass;
