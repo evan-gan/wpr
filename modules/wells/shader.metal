@@ -1,6 +1,6 @@
 // gravity wells, after mjmurdoc: a gravitational potential surface raymarched in perspective,
-// isolines drawn on the surface, glowing bodies lighting their own wells, satellites that dent
-// the sheet too, orbit rings, and a dashed web between the masses.
+// isolines drawn on the surface, colour ramped by depth so each bowl glows from its floor,
+// emissive bodies, near-massless satellites, orbit rings and a dashed web as real 3D curves.
 
 #define MAX_BODIES 7
 #define MAX_RINGS 3
@@ -18,13 +18,12 @@
 #endif
 
 struct Body {
-  float3 pos;      // world position of the sphere center
+  float3 pos;
   float mass;
   float radius;
-  float soft;      // softening length of its well
-  float3 core;     // emissive sphere color
-  float3 glow;     // color it throws onto the well walls
-  int rings;       // orbit ellipses drawn on the surface around it
+  float soft;
+  float3 core;
+  int rings;
   float ringA[MAX_RINGS], ringB[MAX_RINGS], ringY[MAX_RINGS];
   float rot;
 };
@@ -36,7 +35,7 @@ struct Sat {
 };
 
 struct Palette {
-  float3 bg, line, dash, orbit, coreWhite, glowA, glowB;
+  float3 bg, line, lineHot, dash, orbit, coreWhite, warm, hot;
   float lineAlpha;
 };
 
@@ -44,26 +43,26 @@ Palette palette(int i) {
   Palette p;
   p.lineAlpha = 0.85;
   switch (i) {
-    case 0:  // ember on teal
-      p.bg = float3(0.004, 0.016, 0.014); p.line = float3(0.80, 0.84, 0.78); p.dash = float3(0.90, 0.45, 0.40);
-      p.orbit = float3(0.85, 0.70, 0.35); p.coreWhite = float3(1.0, 0.95, 0.85);
-      p.glowA = float3(1.0, 0.45, 0.12); p.glowB = float3(1.0, 0.70, 0.30); break;
-    case 1:  // ink: gray lines, red wells
-      p.bg = float3(0.004, 0.004, 0.005); p.line = float3(0.45, 0.46, 0.48); p.dash = float3(0.85, 0.20, 0.18);
-      p.orbit = float3(0.55, 0.55, 0.55); p.coreWhite = float3(1.0, 0.92, 0.92);
-      p.glowA = float3(0.90, 0.12, 0.10); p.glowB = float3(1.0, 0.55, 0.30); p.lineAlpha = 0.7; break;
-    case 2:  // neon: green contours, electric blue wells
-      p.bg = float3(0.002, 0.005, 0.018); p.line = float3(0.15, 0.95, 0.45); p.dash = float3(0.25, 0.40, 0.95);
-      p.orbit = float3(0.30, 0.80, 0.95); p.coreWhite = float3(0.92, 0.98, 1.0);
-      p.glowA = float3(0.05, 0.35, 1.0); p.glowB = float3(0.20, 0.65, 1.0); p.lineAlpha = 0.9; break;
-    case 3:  // gold on navy, salmon dashes
-      p.bg = float3(0.010, 0.010, 0.024); p.line = float3(0.45, 0.50, 0.75); p.dash = float3(0.95, 0.40, 0.30);
-      p.orbit = float3(0.90, 0.75, 0.40); p.coreWhite = float3(1.0, 0.96, 0.80);
-      p.glowA = float3(1.0, 0.40, 0.15); p.glowB = float3(1.0, 0.65, 0.35); p.lineAlpha = 0.7; break;
-    default: // magenta on violet, cyan orbits
-      p.bg = float3(0.012, 0.003, 0.018); p.line = float3(0.55, 0.40, 0.75); p.dash = float3(0.30, 0.90, 0.95);
-      p.orbit = float3(0.35, 0.95, 0.95); p.coreWhite = float3(1.0, 0.90, 1.0);
-      p.glowA = float3(1.0, 0.15, 0.60); p.glowB = float3(0.95, 0.40, 0.90); p.lineAlpha = 0.75; break;
+    case 0:  // ember on teal: green sheet, red -> orange -> yellow floors
+      p.bg = float3(0.004, 0.016, 0.014); p.line = float3(0.55, 0.62, 0.55); p.lineHot = float3(0.95, 0.85, 0.6);
+      p.dash = float3(0.90, 0.45, 0.40); p.orbit = float3(0.85, 0.70, 0.35); p.coreWhite = float3(1.0, 0.95, 0.75);
+      p.warm = float3(0.55, 0.06, 0.02); p.hot = float3(1.0, 0.55, 0.10); break;
+    case 1:  // ink: gray lines, red floors
+      p.bg = float3(0.004, 0.004, 0.005); p.line = float3(0.42, 0.43, 0.45); p.lineHot = float3(0.9, 0.7, 0.65);
+      p.dash = float3(0.85, 0.20, 0.18); p.orbit = float3(0.55, 0.55, 0.55); p.coreWhite = float3(1.0, 0.92, 0.92);
+      p.warm = float3(0.30, 0.02, 0.02); p.hot = float3(1.0, 0.25, 0.12); p.lineAlpha = 0.7; break;
+    case 2:  // neon: green contours turning cyan, blue floors
+      p.bg = float3(0.002, 0.005, 0.018); p.line = float3(0.15, 0.85, 0.40); p.lineHot = float3(0.45, 1.0, 1.0);
+      p.dash = float3(0.25, 0.40, 0.95); p.orbit = float3(0.30, 0.80, 0.95); p.coreWhite = float3(0.92, 0.98, 1.0);
+      p.warm = float3(0.02, 0.10, 0.60); p.hot = float3(0.15, 0.55, 1.0); p.lineAlpha = 0.9; break;
+    case 3:  // gold on navy, salmon dashes, orange floors
+      p.bg = float3(0.010, 0.010, 0.024); p.line = float3(0.42, 0.46, 0.70); p.lineHot = float3(0.95, 0.85, 0.65);
+      p.dash = float3(0.95, 0.40, 0.30); p.orbit = float3(0.90, 0.75, 0.40); p.coreWhite = float3(1.0, 0.96, 0.80);
+      p.warm = float3(0.45, 0.10, 0.04); p.hot = float3(1.0, 0.50, 0.18); p.lineAlpha = 0.7; break;
+    default: // magenta on violet, cyan orbits, pink floors
+      p.bg = float3(0.012, 0.003, 0.018); p.line = float3(0.50, 0.38, 0.70); p.lineHot = float3(1.0, 0.75, 0.95);
+      p.dash = float3(0.30, 0.90, 0.95); p.orbit = float3(0.35, 0.95, 0.95); p.coreWhite = float3(1.0, 0.90, 1.0);
+      p.warm = float3(0.40, 0.02, 0.30); p.hot = float3(1.0, 0.25, 0.70); p.lineAlpha = 0.75; break;
   }
   return p;
 }
@@ -135,12 +134,9 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     if (i == 0 && r0 < 0.5) m = 1.6 + hash11(k + 3.5) * 1.0;
     bodies[i].mass = m;
     bodies[i].radius = 0.06 + m * 0.045;
-    // wide bowls rather than funnels: the body should sit visibly in its well
-    bodies[i].soft = bodies[i].radius * 5.5;
+    bodies[i].soft = bodies[i].radius * 5.5;   // wide bowls rather than funnels
     bodies[i].pos = float3(xz.x, 0.0, xz.y);
     bodies[i].core = pal.coreWhite;
-    bodies[i].glow = mix(pal.glowA, pal.glowB, hash11(k + 4.0));
-    // 0-3 orbit rings, spaced outward; some bodies have none
     float rr = hash11(k + 5.0);
     bodies[i].rings = rr < 0.3 ? 0 : (rr < 0.6 ? 1 : (rr < 0.85 ? 2 : 3));
     for (int q = 0; q < MAX_RINGS; q++) {
@@ -221,7 +217,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       tS = t;
       float3 nrm = normalize(ro + rd * t - bodies[i].pos);
       float rim = pow(1.0 - max(0.0, dot(nrm, -rd)), 2.0);
-      sphereCol = mix(bodies[i].core * 1.6, bodies[i].glow * 2.2, rim * 0.7);
+      sphereCol = mix(bodies[i].core * 1.6, pal.hot * 2.0, rim * 0.7);
     }
   }
   for (int i = 0; i < ns; i++) {
@@ -231,7 +227,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       float3 nrm = normalize(ro + rd * t - sats[i].pos);
       float3 parentPos = bodies[sats[i].parent].pos;
       float lit = 0.35 + 0.65 * max(0.0, dot(nrm, normalize(parentPos - sats[i].pos)));
-      sphereCol = mix(float3(0.55, 0.55, 0.6), bodies[sats[i].parent].glow, 0.3) * lit * 1.2;
+      sphereCol = mix(float3(0.55, 0.55, 0.6), pal.hot, 0.3) * lit * 1.2;
     }
   }
 
@@ -271,27 +267,35 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float facing = max(0.25, abs(dot(nrm, -rd)));
     float pixelWorld = t / pxPerUnit;
 
-    // the sheet itself: dark, lit faintly from above, and by each body as a point light in its
-    // well — a lambert term, so walls that face the body glow and the flat sheet beyond the rim
-    // (which faces away from a body sitting below it) stays dark
-    float lambert = max(0.0, dot(nrm, normalize(float3(0.3, 1.0, 0.25))));
-    col = pal.bg * (0.4 + 0.5 * lambert);
+    // the sheet's colour is a ramp on depth into the nearest bowl: flat = background, warming
+    // as it drops, hot on the floor. depth is each body's own well normalised to its peak, so
+    // a cluster's shared depression stays dark and only the bowls glow, banded by the rings
+    float depth = 0.0;
     for (int i = 0; i < n; i++) {
-      float3 L = bodies[i].pos - q;
-      float rr = length(L);
-      float face = max(0.0, dot(nrm, L / rr));
-      float glow = bodies[i].mass / (rr * rr * 18.0 + 0.10) * exp(-rr * 1.4) * face;
-      col += bodies[i].glow * min(glow * 0.12, 0.4);
+      float2 d = q.xz - bodies[i].pos.xz;
+      float w = bodies[i].soft / sqrt(dot(d, d) + bodies[i].soft * bodies[i].soft);
+      depth += w * w * w * w;
     }
+    for (int i = 0; i < ns; i++) {
+      float2 d = q.xz - sats[i].pos.xz;
+      float w = sats[i].soft / sqrt(dot(d, d) + sats[i].soft * sats[i].soft) * 0.6;
+      depth += w * w * w * w;
+    }
+    depth = pow(depth, 0.25);
+    float lambert = max(0.0, dot(nrm, normalize(float3(0.3, 1.0, 0.25))));
+    col = pal.bg * (0.5 + 0.5 * lambert);
+    col = mix(col, pal.warm, smoothstep(0.22, 0.55, depth));
+    col = mix(col, pal.hot, smoothstep(0.55, 0.9, depth));
+    col = mix(col, pal.coreWhite * 1.3, smoothstep(0.9, 1.0, depth) * 0.5);
 
-    // isolines of the potential, constant width in screen pixels
+    // isolines of the potential, constant width in screen pixels, brightening with depth
     float levels = 16.0;
     float f = h * levels;
     float fw = levels * length(g) * pixelWorld / facing + 1e-5;
     float dl = min(fract(f), 1.0 - fract(f));
     float line = 1.0 - smoothstep(0.3 * fw, 1.2 * fw, dl);
     float crowd = 1.0 - smoothstep(0.28, 0.55, fw);
-    float lw = pixelWorld * 1.3 / facing;
+    float3 lineCol = mix(pal.line, pal.lineHot, smoothstep(0.2, 0.8, depth));
 
     // optional disc edge: the sheet fades to nothing past a radius
     float edge = 1.0;
@@ -301,7 +305,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     }
     float fog = exp(-t * 0.055);
 
-    col = mix(col, pal.line, line * crowd * pal.lineAlpha * fog);
+    col = mix(col, lineCol, line * crowd * pal.lineAlpha * fog);
     col *= edge;
     col = mix(col, pal.bg * 0.35, 1.0 - fog);
   } else {
@@ -349,8 +353,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   col = mix(col, pal.dash, dash * 0.85 * dashFog);
 
   // bloom: screen-space halos around every body the camera can actually see. a lens halo is all
-  // or nothing — so the test is a shadow ray from the camera to the body, not a per-pixel depth
-  // compare (which cut the halo in half along the near wall of every bowl)
+  // or nothing, so the test is a shadow ray from the camera to the body, shared by every pixel
   for (int i = 0; i < n; i++) {
     float3 v = bodies[i].pos - ro;
     float z = dot(v, fwd);
@@ -359,8 +362,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float2 spx = (sp / float2(aspect, 1.0) * 0.5 + 0.5) * u.res;
     float dpx = length(uv * u.res - spx);
     float rpx = bodies[i].radius / (z * tanHalf) * u.res.y * 0.5;
-    // the shadow ray is the same answer for every pixel; only pay for it where the halo reaches,
-    // and fade the halo out toward that reach so the cutoff never shows against a dark sky
+    // only pay for the shadow ray where the halo reaches, and fade it out toward that reach
     float reach = max(rpx * 14.0, 40.0);
     if (dpx > reach) continue;
     float fade = 1.0 - smoothstep(reach * 0.45, reach, dpx);
@@ -376,7 +378,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     if (!visible) continue;
     float tight = 1.0 / (1.0 + pow(dpx / max(rpx * 0.9, 2.0), 2.0));
     float wide = 1.0 / (1.0 + pow(dpx / max(rpx * 3.0, 6.0), 3.0));
-    col += (bodies[i].core * tight * 0.35 + bodies[i].glow * wide * 0.04 * bodies[i].mass) * fade;
+    col += (bodies[i].core * tight * 0.35 + pal.hot * wide * 0.04 * bodies[i].mass) * fade;
   }
 
   col *= 1.0 - 0.3 * dot(uv - 0.5, uv - 0.5);
