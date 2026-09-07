@@ -16,6 +16,10 @@
 #ifndef WP_PARAM_az
 #define WP_PARAM_az -1.0
 #endif
+// `--set three=1` forces the two-body / lagrange scene, `three=0` the n-body cluster; negative = seeded
+#ifndef WP_PARAM_three
+#define WP_PARAM_three -1.0
+#endif
 
 struct Body {
   float3 pos;
@@ -67,9 +71,18 @@ Palette palette(int i) {
   return p;
 }
 
-// the potential: softened 1/r wells, summed over bodies and satellites. always <= 0, flat far away
-float potential(float2 xz, thread const Body* b, int n, thread const Sat* s, int ns) {
-  float h = 0.0;
+// the frame the sheet is drawn in. the n-body cluster is inertial (w2 = 0): softened 1/r wells,
+// always <= 0, flat far away. the two-body scene is its co-rotating frame: the centrifugal term
+// makes the sheet the effective potential, whose saddles and hilltops are the lagrange points;
+// phi0 lifts the hilltops to height 0 so the sheet still has a ceiling
+struct Frame {
+  float2 bary;
+  float w2;
+  float phi0;
+};
+
+float potential(float2 xz, thread const Body* b, int n, thread const Sat* s, int ns, Frame fr) {
+  float h = -fr.phi0;
   for (int i = 0; i < n; i++) {
     float2 d = xz - b[i].pos.xz;
     h -= b[i].mass * 0.35 / sqrt(dot(d, d) + b[i].soft * b[i].soft);
@@ -78,13 +91,15 @@ float potential(float2 xz, thread const Body* b, int n, thread const Sat* s, int
     float2 d = xz - s[i].pos.xz;
     h -= s[i].mass * 0.35 / sqrt(dot(d, d) + s[i].soft * s[i].soft);
   }
+  float2 c = xz - fr.bary;
+  h -= 0.5 * fr.w2 * dot(c, c);
   return h;
 }
 
-float2 gradient(float2 xz, thread const Body* b, int n, thread const Sat* s, int ns) {
+float2 gradient(float2 xz, thread const Body* b, int n, thread const Sat* s, int ns, Frame fr) {
   float e = 0.006;
-  return float2(potential(xz + float2(e, 0), b, n, s, ns) - potential(xz - float2(e, 0), b, n, s, ns),
-                potential(xz + float2(0, e), b, n, s, ns) - potential(xz - float2(0, e), b, n, s, ns)) / (2.0 * e);
+  return float2(potential(xz + float2(e, 0), b, n, s, ns, fr) - potential(xz - float2(e, 0), b, n, s, ns, fr),
+                potential(xz + float2(0, e), b, n, s, ns, fr) - potential(xz - float2(0, e), b, n, s, ns, fr)) / (2.0 * e);
 }
 
 // ray/sphere with an anti-aliased edge: cov is how much of this pixel the sphere covers, from
@@ -140,6 +155,30 @@ float markFade(float t, float fogRate, float dist) {
   return exp(-t * fogRate) * (1.0 - smoothstep(1.2, 2.4, t / dist));
 }
 
+// a dashed string from a to b — straight where it can be, draped over the sheet where the
+// straight line would cut through a ridge. folds its best coverage into dash / dashFog
+void dashedString(float3 ro, float3 rd, float3 a, float3 b, float tLimit, float pxPerUnit, float fogRate, float camDist,
+                  thread const Body* bodies, int n, thread const Sat* sats, int ns, Frame fr,
+                  thread float& dash, thread float& dashFog) {
+  float s, uu;
+  if (raySegment(ro, rd, a, b, s, uu) > 2.0) return;   // the drape lifts it, but not that far
+  float len = length(b.xz - a.xz);
+  const int K = 24;
+  float3 prev = a;
+  for (int k = 1; k <= K; k++) {
+    float3 c = mix(a, b, float(k) / float(K));
+    c.y = max(c.y, potential(c.xz, bodies, n, sats, ns, fr) + 0.025);
+    float d = raySegment(ro, rd, prev, c, s, uu);
+    float along = (float(k - 1) + uu) / float(K);
+    prev = c;
+    if (s > tLimit) continue;
+    float lw = s / pxPerUnit * 1.3;
+    float on = step(fract(along * len / 0.22), 0.55);
+    float cov = (1.0 - smoothstep(0.4 * lw, 1.4 * lw, d)) * on;
+    if (cov > dash) { dash = cov; dashFog = markFade(s, fogRate, camDist); }
+  }
+}
+
 float4 wp_main(float2 uv, constant Uniforms& u) {
   float aspect = u.res.x / u.res.y;
   float S = u.seed;
@@ -193,19 +232,100 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       }
     }
   }
+
+  // two-body scene: a primary and secondary in circular orbit, drawn in their co-rotating frame.
+  // the sheet is then the effective potential, so the lagrange points are its actual saddles
+  // (L1–L3) and hilltops (L4, L5) — no approximations, found on the softened surface itself.
+  // the only satellites are trojans: massless, librating about L4 and L5
+  bool three = WP_PARAM_three >= 0.0 ? WP_PARAM_three > 0.5 : hash11(S + 13.0) < 0.3;
+  Frame fr;
+  fr.bary = 0.0; fr.w2 = 0.0; fr.phi0 = 0.0;
+  float2 lag[5];
+  float critH[3];
+  if (three) {
+    n = 2;
+    ns = 0;
+    float mu = 0.02 + pow(hash11(S + 14.0), 1.5) * 0.38;   // the secondary's share of the mass
+    float R = 2.6 + hash11(S + 15.0);
+    float ang = hash11(S + 16.0) * 6.2831853;
+    float2 dir = float2(cos(ang), sin(ang)), perp = float2(-dir.y, dir.x);
+    float m1 = 1.7 + hash11(S + 17.0) * 0.6, m2 = m1 * mu / (1.0 - mu);
+    float2 P = -dir * R * mu, Q = dir * R * (1.0 - mu);   // barycentre at the origin
+    bodies[0].mass = m1; bodies[1].mass = m2;
+    bodies[0].pos = float3(P.x, 0.0, P.y); bodies[1].pos = float3(Q.x, 0.0, Q.y);
+    for (int i = 0; i < 2; i++) {
+      bodies[i].radius = 0.06 + bodies[i].mass * 0.045;
+      bodies[i].soft = bodies[i].radius * 5.5;
+      bodies[i].core = pal.coreWhite;
+      bodies[i].rings = 0;
+      bodies[i].rot = 0.0;
+    }
+    center = 0.0;
+    fr.w2 = 0.35 * (m1 + m2) / (R * R * R);   // ω² = G(M1+M2)/R³, with G·M = 0.35·mass in the sheet's units
+    // L4, L5: start at the equilateral points and walk uphill onto the softened surface's true tops
+    for (int k = 0; k < 2; k++) {
+      float2 L = P + (dir * 0.5 + perp * (k == 0 ? 0.8660254 : -0.8660254)) * R;
+      float step = 0.1 * R;
+      for (int it = 0; it < 14; it++) {
+        float best = potential(L, bodies, n, sats, ns, fr);
+        float2 up = L;
+        for (int d = 0; d < 4; d++) {
+          float2 c = L + (d < 2 ? dir : perp) * (d % 2 == 0 ? step : -step);
+          float v = potential(c, bodies, n, sats, ns, fr);
+          if (v > best) { best = v; up = c; }
+        }
+        if (all(up == L)) step *= 0.5;
+        L = up;
+      }
+      lag[3 + k] = L;
+    }
+    fr.phi0 = potential(lag[3], bodies, n, sats, ns, fr);   // hilltops become height 0, the sheet's ceiling
+    // L1, L2, L3: where the slope along the axis crosses zero — between the bodies, beyond the
+    // secondary, beyond the primary. the height rises then falls across each interval
+    for (int k = 0; k < 3; k++) {
+      float lo, hi;
+      if (k == 0)      { lo = -R * mu + 0.06 * R;        hi = R * (1.0 - mu) - 0.06 * R; }
+      else if (k == 1) { lo = R * (1.0 - mu) + 0.06 * R; hi = R * (1.0 - mu) + 1.5 * R; }
+      else             { lo = -R * mu - 1.5 * R;         hi = -R * mu - 0.06 * R; }
+      for (int it = 0; it < 40; it++) {
+        float mid = 0.5 * (lo + hi);
+        if (dot(gradient(dir * mid, bodies, n, sats, ns, fr), dir) > 0.0) lo = mid; else hi = mid;
+      }
+      lag[k] = dir * 0.5 * (lo + hi);
+      critH[k] = potential(lag[k], bodies, n, sats, ns, fr);
+    }
+    // trojans: up to two test masses about each of L4 and L5, spread along the orbit
+    for (int k = 0; k < 2; k++) {
+      int count = int(hash11(S + 18.0 + float(k)) * 3.0);
+      float2 tang = normalize(float2(-lag[3 + k].y, lag[3 + k].x));
+      for (int s = 0; s < count && ns < MAX_SATS; s++) {
+        float ks = S + 19.0 + float(k) * 7.0 + float(s) * 1.3;
+        float2 xz = lag[3 + k] + tang * (hash11(ks) - 0.5) * 0.5 * R + normalize(lag[3 + k]) * (hash11(ks + 1.0) - 0.5) * 0.06 * R;
+        sats[ns].pos = float3(xz.x, 0.0, xz.y);
+        sats[ns].radius = 0.014 + hash11(ks + 2.0) * 0.016;
+        sats[ns].mass = 0.0;
+        sats[ns].soft = 1.0;
+        sats[ns].parent = 1;
+        ns++;
+      }
+    }
+  }
+
   // bodies settle just above the floor of their own bowl; each ring floats just above the highest
   // point of the sheet beneath it, so it rests in the bowl and never sinks into a neighbour's wall
   for (int i = 0; i < n; i++) {
-    bodies[i].pos.y = potential(bodies[i].pos.xz, bodies, n, sats, ns) + bodies[i].radius * 0.9;
+    bodies[i].pos.y = potential(bodies[i].pos.xz, bodies, n, sats, ns, fr) + bodies[i].radius * 0.9;
     for (int q = 0; q < bodies[i].rings; q++) {
       float top = -1e9;
       for (int a = 0; a < 16; a++) {
-        top = max(top, potential(ringPoint(bodies[i], q, float(a) * 0.39269908), bodies, n, sats, ns));
+        top = max(top, potential(ringPoint(bodies[i], q, float(a) * 0.39269908), bodies, n, sats, ns, fr));
       }
       bodies[i].ringY[q] = top + 0.03;
     }
   }
-  for (int i = 0; i < ns; i++) {
+  if (three) {
+    for (int i = 0; i < ns; i++) sats[i].pos.y = potential(sats[i].pos.xz, bodies, n, sats, ns, fr) + sats[i].radius;
+  } else for (int i = 0; i < ns; i++) {
     // find the ring this satellite was placed on and sit on it
     int p = sats[i].parent;
     float best = 1e9, y = 0.0;
@@ -219,42 +339,15 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     sats[i].pos.y = y + sats[i].radius;
   }
 
-  // lagrange points of one pair — the heaviest body with one of its satellites, or with its
-  // nearest neighbour — from the restricted three-body approximations
-  bool callouts = hash11(S + 12.0) < 0.6;
-  float2 lag[5];
-  {
-    int big = 0;
-    for (int i = 1; i < n; i++) if (bodies[i].mass > bodies[big].mass) big = i;
-    float2 P = bodies[big].pos.xz, Q = 0.0;
-    float M = bodies[big].mass, m = 0.0;
-    int sat = -1;
-    for (int i = 0; i < ns; i++) if (sats[i].parent == big) { sat = i; break; }
-    if (sat >= 0) {
-      Q = sats[sat].pos.xz; m = sats[sat].mass;
-    } else {
-      float best = 1e9;
-      for (int i = 0; i < n; i++) {
-        float d = length(bodies[i].pos.xz - P);
-        if (i != big && d < best) { best = d; Q = bodies[i].pos.xz; m = bodies[i].mass; }
-      }
-    }
-    float2 dv = Q - P;
-    float R = length(dv);
-    float2 dir = dv / R, perp = float2(-dir.y, dir.x);
-    float hill = R * pow(m / (3.0 * M), 1.0 / 3.0);
-    lag[0] = Q - dir * hill;
-    lag[1] = Q + dir * hill;
-    lag[2] = P - dir * R * (1.0 + 5.0 * m / (12.0 * M));
-    lag[3] = P + (dir * 0.5 + perp * 0.8660254) * R;
-    lag[4] = P + (dir * 0.5 - perp * 0.8660254) * R;
-  }
-
   // camera: far and high over the cluster, close and medium, or grazing — down at the sheet
   // with bodies clipping the horizon
-  bool graze = r1 < 0.25, close = r1 < 0.55;
+  // the two-body sheet is a dome that falls away past the pair, so no grazing shots there — the
+  // camera would be standing on the rim looking in
+  bool graze = r1 < 0.25 && !three, close = r1 < 0.55;
   float dist = WP_PARAM_dist >= 0.0 ? WP_PARAM_dist : (graze ? 2.6 + r2 * 2.0 : close ? 3.2 + r2 * 2.5 : 7.5 + r2 * 6.0);
-  float el = WP_PARAM_el >= 0.0 ? WP_PARAM_el : (graze ? 0.07 + r3 * 0.13 : (close ? 0.22 : 0.42) + r3 * 0.36);
+  // (and its close shots stay high enough that the line of sight over a saddle lands on the dome,
+  // not on the sky behind it)
+  float el = WP_PARAM_el >= 0.0 ? WP_PARAM_el : (graze ? 0.07 + r3 * 0.13 : (close ? (three ? 0.36 : 0.22) : 0.42) + r3 * 0.36);
   float az = WP_PARAM_az >= 0.0 ? WP_PARAM_az : hash11(S + 6.0) * 6.2831853;
   float3 target = center + float3(hash11(S + 7.0) - 0.5, 0.0, hash11(S + 8.0) - 0.5) * (close ? 2.5 : 1.0);
   target.y = graze ? -0.3 : (close ? -0.4 : -0.2);
@@ -305,7 +398,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   for (int i = 0; i < 240; i++) {
     float3 q = ro + rd * t;
     if (q.y > 0.04 && rd.y > 0.0) break;
-    float dh = q.y - potential(q.xz, bodies, n, sats, ns);
+    float dh = q.y - potential(q.xz, bodies, n, sats, ns, fr);
     if (dh < 0.0015) { hit = true; break; }
     tPrev = t;
     t += clamp(dh * 0.45, 0.004, 0.5);
@@ -316,7 +409,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     for (int i = 0; i < 6; i++) {
       float mid = 0.5 * (lo + hi);
       float3 q = ro + rd * mid;
-      if (q.y - potential(q.xz, bodies, n, sats, ns) < 0.0) hi = mid; else lo = mid;
+      if (q.y - potential(q.xz, bodies, n, sats, ns, fr) < 0.0) hi = mid; else lo = mid;
     }
     t = 0.5 * (lo + hi);
   }
@@ -330,8 +423,8 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   float tLimit = sphereFront ? tS : (hit ? t : 1e9);
   if (hit) {
     float3 q = ro + rd * t;
-    float h = potential(q.xz, bodies, n, sats, ns);
-    float2 g = gradient(q.xz, bodies, n, sats, ns);
+    float h = potential(q.xz, bodies, n, sats, ns, fr);
+    float2 g = gradient(q.xz, bodies, n, sats, ns, fr);
     float3 nrm = normalize(float3(-g.x, 1.0, -g.y));
     float facing = max(0.25, abs(dot(nrm, -rd)));
     float pixelWorld = t / pxPerUnit;
@@ -346,6 +439,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       depth += w * w * w * w;
     }
     for (int i = 0; i < ns; i++) {
+      if (sats[i].mass <= 0.0) continue;   // trojans are test masses: no dimple, no glow
       float2 d = q.xz - sats[i].pos.xz;
       float w = sats[i].soft / sqrt(dot(d, d) + sats[i].soft * sats[i].soft) * 0.6;
       depth += w * w * w * w;
@@ -377,7 +471,20 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float fog = exp(-t * fogRate);
     float lineFog = markFade(t, fogRate, dist);
 
+    float crit = 0.0;
+    if (three) {
+      // hill's zero-velocity curves: the contours at the L1, L2 and L3 energies — the roche lobes
+      // meeting at L1, and the two envelopes outside — drawn brighter, with the ordinary contour
+      // that would run beside each one suppressed so they don't read as doubled
+      float hw = length(g) * pixelWorld / facing + 1e-6;
+      for (int k = 0; k < 3; k++) {
+        float dc = abs(h - critH[k]);
+        crit = max(crit, 1.0 - smoothstep(0.7 * hw, 2.0 * hw, dc));
+        line *= smoothstep(0.25 / levels, 0.5 / levels, dc);
+      }
+    }
     col = mix(col, lineCol, line * crowd * pal.lineAlpha * lineFog);
+    col = mix(col, pal.lineHot, crit * 0.9 * lineFog);
     col *= edge;
     col = mix(col, sky, 1.0 - fog);
   }
@@ -401,36 +508,38 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   }
   col = mix(col, pal.orbit, orbit * 0.9 * orbitFog);
 
-  // dashed web: a string laid from each body to its nearest earlier body — straight where it can
-  // be, draped over the sheet where the straight line would cut through the ridge between bowls
+  // dashed strings. the cluster's web links each body to its nearest earlier body; the two-body
+  // scene draws its construction instead — the axis from L3 through both bodies to L2, and the
+  // equilateral triangles that place L4 and L5
   float dash = 0.0, dashFog = 1.0;
-  for (int i = 1; i < n; i++) {
-    int j = 0;
-    float best = 1e9;
-    for (int k = 0; k < i; k++) {
-      float dk = length(bodies[i].pos.xz - bodies[k].pos.xz);
-      if (dk < best) { best = dk; j = k; }
-    }
-    float3 a = bodies[i].pos + float3(0, bodies[i].radius * 0.6, 0);
-    float3 b = bodies[j].pos + float3(0, bodies[j].radius * 0.6, 0);
-    float s, uu;
-    if (raySegment(ro, rd, a, b, s, uu) > 2.0) continue;   // the drape lifts it, but not that far
-    const int K = 24;
-    float3 prev = a;
-    for (int k = 1; k <= K; k++) {
-      float3 c = mix(a, b, float(k) / float(K));
-      c.y = max(c.y, potential(c.xz, bodies, n, sats, ns) + 0.025);
-      float d = raySegment(ro, rd, prev, c, s, uu);
-      float along = (float(k - 1) + uu) / float(K);
-      prev = c;
-      if (s > tLimit) continue;
-      float lw = s / pxPerUnit * 1.3;
-      float on = step(fract(along * best / 0.22), 0.55);
-      float cov = (1.0 - smoothstep(0.4 * lw, 1.4 * lw, d)) * on;
-      if (cov > dash) { dash = cov; dashFog = markFade(s, fogRate, dist); }
+  if (three) {
+    float3 P3 = bodies[0].pos + float3(0, bodies[0].radius * 0.6, 0);
+    float3 Q3 = bodies[1].pos + float3(0, bodies[1].radius * 0.6, 0);
+    float3 L1 = float3(lag[0].x, critH[0] + 0.03, lag[0].y), L2 = float3(lag[1].x, critH[1] + 0.03, lag[1].y);
+    float3 L3 = float3(lag[2].x, critH[2] + 0.03, lag[2].y);
+    float3 L4 = float3(lag[3].x, 0.03, lag[3].y), L5 = float3(lag[4].x, 0.03, lag[4].y);
+    dashedString(ro, rd, L3, P3, tLimit, pxPerUnit, fogRate, dist, bodies, n, sats, ns, fr, dash, dashFog);
+    dashedString(ro, rd, P3, L1, tLimit, pxPerUnit, fogRate, dist, bodies, n, sats, ns, fr, dash, dashFog);
+    dashedString(ro, rd, L1, Q3, tLimit, pxPerUnit, fogRate, dist, bodies, n, sats, ns, fr, dash, dashFog);
+    dashedString(ro, rd, Q3, L2, tLimit, pxPerUnit, fogRate, dist, bodies, n, sats, ns, fr, dash, dashFog);
+    dashedString(ro, rd, P3, L4, tLimit, pxPerUnit, fogRate, dist, bodies, n, sats, ns, fr, dash, dashFog);
+    dashedString(ro, rd, Q3, L4, tLimit, pxPerUnit, fogRate, dist, bodies, n, sats, ns, fr, dash, dashFog);
+    dashedString(ro, rd, P3, L5, tLimit, pxPerUnit, fogRate, dist, bodies, n, sats, ns, fr, dash, dashFog);
+    dashedString(ro, rd, Q3, L5, tLimit, pxPerUnit, fogRate, dist, bodies, n, sats, ns, fr, dash, dashFog);
+  } else {
+    for (int i = 1; i < n; i++) {
+      int j = 0;
+      float best = 1e9;
+      for (int k = 0; k < i; k++) {
+        float dk = length(bodies[i].pos.xz - bodies[k].pos.xz);
+        if (dk < best) { best = dk; j = k; }
+      }
+      float3 a = bodies[i].pos + float3(0, bodies[i].radius * 0.6, 0);
+      float3 b = bodies[j].pos + float3(0, bodies[j].radius * 0.6, 0);
+      dashedString(ro, rd, a, b, tLimit, pxPerUnit, fogRate, dist, bodies, n, sats, ns, fr, dash, dashFog);
     }
   }
-  col = mix(col, pal.dash, dash * 0.85 * dashFog);
+  col = mix(col, pal.dash, dash * (three ? 0.6 : 0.85) * dashFog);
 
   // spheres go on last so their anti-aliased rims blend over whatever is behind them
   if (sphereFront) col = mix(col, sphereCol, sphereCov);
@@ -456,7 +565,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       float tt = len * float(s) / 40.0;
       if (tt > len - bodies[i].radius) break;
       float3 q = ro + dir * tt;
-      if (q.y < potential(q.xz, bodies, n, sats, ns)) { visible = false; break; }
+      if (q.y < potential(q.xz, bodies, n, sats, ns, fr)) { visible = false; break; }
     }
     if (!visible) continue;
     float tight = 1.0 / (1.0 + pow(dpx / max(rpx * 0.9, 2.0), 2.0));
@@ -466,12 +575,12 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
 
   // callouts: a ring on each lagrange point, a 45° leader, and its name in the pixel font —
   // screen-space UI, constant size, hidden where the sheet is in the way
-  if (callouts) {
+  if (three) {
     float cell = max(3.0, round(u.res.y / 480.0));
     float2 px = uv * u.res;
     float ui = 0.0;
     for (int k = 0; k < 5; k++) {
-      float3 wp = float3(lag[k].x, potential(lag[k], bodies, n, sats, ns) + 0.02, lag[k].y);
+      float3 wp = float3(lag[k].x, potential(lag[k], bodies, n, sats, ns, fr) + 0.02, lag[k].y);
       float3 v = wp - ro;
       float z = dot(v, fwd);
       if (z <= 0.1) continue;
@@ -487,7 +596,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
         float tt = len * float(s) / 40.0;
         if (tt > len - 0.03) break;
         float3 q = ro + dir * tt;
-        if (q.y < potential(q.xz, bodies, n, sats, ns)) { visible = false; break; }
+        if (q.y < potential(q.xz, bodies, n, sats, ns, fr)) { visible = false; break; }
       }
       if (!visible) continue;
       float ring = 1.0 - smoothstep(0.8, 1.8, abs(length(d) - 5.0));
