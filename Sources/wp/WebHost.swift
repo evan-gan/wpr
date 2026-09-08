@@ -45,19 +45,41 @@ enum Subprocess {
     p.standardOutput = outPipe
     p.standardError = errPipe
     try p.run()
-    // drain both pipes before waiting so a chatty child can't fill a buffer and deadlock
-    var errData = Data()
-    let group = DispatchGroup()
-    group.enter()
-    DispatchQueue.global().async {
-      errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-      group.leave()
+    return forwardingSignals(to: p) {
+      // drain both pipes before waiting so a chatty child can't fill a buffer and deadlock
+      var errData = Data()
+      let group = DispatchGroup()
+      group.enter()
+      DispatchQueue.global().async {
+        errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        group.leave()
+      }
+      let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+      group.wait()
+      p.waitUntilExit()
+      return Result(status: p.terminationStatus,
+                    stdout: String(decoding: outData, as: UTF8.self),
+                    stderr: String(decoding: errData, as: UTF8.self))
     }
-    let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-    group.wait()
-    p.waitUntilExit()
-    return Result(status: p.terminationStatus,
-                  stdout: String(decoding: outData, as: UTF8.self),
-                  stderr: String(decoding: errData, as: UTF8.self))
+  }
+
+  /// runs `body` with ctrl-c, SIGTERM and SIGHUP forwarded to the child as SIGTERM. Process spawns
+  /// children into a process group of their own, so the terminal's ctrl-c kills us and never
+  /// reaches them — an orphaned bun keeps its port, an orphaned chrome keeps running. default
+  /// handling comes back afterwards so a later ctrl-c still stops us
+  static func forwardingSignals<T>(to p: Process, _ body: () throws -> T) rethrows -> T {
+    let sigs = [SIGINT, SIGTERM, SIGHUP]
+    let sources = sigs.map { sig -> DispatchSourceSignal in
+      signal(sig, SIG_IGN)
+      let src = DispatchSource.makeSignalSource(signal: sig, queue: .global())
+      src.setEventHandler { if p.isRunning { p.terminate() } }
+      src.resume()
+      return src
+    }
+    defer {
+      sources.forEach { $0.cancel() }
+      sigs.forEach { signal($0, SIG_DFL) }
+    }
+    return try body()
   }
 }

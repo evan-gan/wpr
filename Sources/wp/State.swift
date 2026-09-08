@@ -123,11 +123,13 @@ struct UICommand: ParsableCommand {
     env["WP_ROOT"] = root.path
     p.environment = env
     try p.run()
-    print("gallery at http://localhost:\(port)  (ctrl-c to stop)")
-    if !noOpen {
-      usleep(500_000)
-      _ = try? Subprocess.run(executable: "/usr/bin/open", arguments: ["http://localhost:\(port)"])
+    Subprocess.forwardingSignals(to: p) {
+      print("gallery at http://localhost:\(port)  (ctrl-c to stop)")
+      if !noOpen {
+        usleep(500_000)
+        _ = try? Subprocess.run(executable: "/usr/bin/open", arguments: ["http://localhost:\(port)"])
+      }
+      p.waitUntilExit()
     }
-    p.waitUntilExit()
   }
 }
