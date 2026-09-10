@@ -26,6 +26,14 @@
 #ifndef WP_PARAM_dof
 #define WP_PARAM_dof -1.0
 #endif
+// animation: `speed` scales every orbit's clock, `spin` is the camera's drift in radians per second
+// (0 for a display that would rather the frame held still)
+#ifndef WP_PARAM_speed
+#define WP_PARAM_speed 1.0
+#endif
+#ifndef WP_PARAM_spin
+#define WP_PARAM_spin 0.02
+#endif
 
 struct Body {
   float3 pos;
@@ -41,7 +49,7 @@ struct Body {
 struct Sat {
   float3 pos;
   float mass, radius, soft;
-  int parent;
+  int parent, ring;   // ring: which of the parent's ellipses it orbits on (-1 for a trojan)
 };
 
 struct Palette {
@@ -121,11 +129,33 @@ float sphereHit(float3 ro, float3 rd, float3 c, float r, float pxPerUnit, thread
   return -b - sqrt(max(r * r - dperp * dperp, 0.0));
 }
 
-float2 ringPoint(thread const Body& b, int k, float ang) {
-  float2 loc = float2(cos(ang) * b.ringA[k], sin(ang) * b.ringB[k]);
+// the rings are kepler ellipses: the body sits at a focus, not the centre, so the ellipse's
+// centre is a·e back along the major axis. eccentricity from the axes
+float ringEcc(thread const Body& b, int k) { return sqrt(max(0.0, 1.0 - (b.ringB[k] * b.ringB[k]) / (b.ringA[k] * b.ringA[k]))); }
+
+float2 ringLocal(thread const Body& b, float2 loc) {
   float cr = cos(b.rot), sr = sin(b.rot);
   return b.pos.xz + float2(loc.x * cr - loc.y * sr, loc.x * sr + loc.y * cr);
 }
+
+// a point on ring k by eccentric angle — for sampling the whole ellipse
+float2 ringPoint(thread const Body& b, int k, float ang) {
+  return ringLocal(b, float2(cos(ang) * b.ringA[k] - b.ringA[k] * ringEcc(b, k), sin(ang) * b.ringB[k]));
+}
+
+// where a satellite on ring k is at mean anomaly M: solve kepler's equation, then the true
+// anomaly and radius measured from the focus, where the body is
+float2 ringOrbit(thread const Body& b, int k, float M) {
+  float e = ringEcc(b, k);
+  float E = M + e * sin(M);
+  for (int i = 0; i < 5; i++) E -= (E - e * sin(E) - M) / (1.0 - e * cos(E));
+  float nu = 2.0 * atan2(sqrt(1.0 + e) * sin(0.5 * E), sqrt(1.0 - e) * cos(0.5 * E));
+  float r = b.ringA[k] * (1.0 - e * e) / (1.0 + e * cos(nu));
+  return ringLocal(b, r * float2(cos(nu), sin(nu)));
+}
+
+// mean motion on ring k: G·M = 0.35·mass in the sheet's units, as in the potential
+float ringRate(thread const Body& b, int k) { return sqrt(0.35 * b.mass / (b.ringA[k] * b.ringA[k] * b.ringA[k])); }
 
 // closest approach between the ray and segment ab: returns the distance, with the ray and
 // segment parameters through out-params
@@ -200,8 +230,9 @@ struct Scene {
   float aspect, tanHalf, dist, pxPerUnit, fogRate, dof, focus;
 };
 
-Scene buildScene(float S, float2 res, thread Body* bodies, thread Sat* sats, thread float2* lag, thread float* critH) {
+Scene buildScene(float S, float2 res, float time, thread Body* bodies, thread Sat* sats, thread float2* lag, thread float* critH) {
   Scene sc = {};
+  float clock = time * WP_PARAM_speed;   // every orbit's time, in the sheet's units
   for (int i = 0; i < 5; i++) lag[i] = 0.0;
   for (int i = 0; i < 3; i++) critH[i] = 0.0;
   float aspect = res.x / res.y;
@@ -243,12 +274,14 @@ Scene buildScene(float S, float2 res, thread Body* bodies, thread Sat* sats, thr
       int count = c < 0.35 ? 0 : (c < 0.65 ? 1 : (c < 0.88 ? 2 : 3));
       for (int s = 0; s < count && ns < MAX_SATS; s++) {
         float ks = kq + float(s) * 1.7 + 0.5;
-        float2 xz = ringPoint(bodies[i], q, hash11(ks) * 6.2831853);
+        // a kepler orbit on this ring: starting phase by seed, advancing at the ring's mean motion
+        float2 xz = ringOrbit(bodies[i], q, hash11(ks) * 6.2831853 + ringRate(bodies[i], q) * clock);
         sats[ns].pos = float3(xz.x, 0.0, xz.y);
         sats[ns].radius = 0.016 + hash11(ks + 1.0) * 0.02;
         sats[ns].mass = 0.006 + hash11(ks + 2.0) * 0.014;
         sats[ns].soft = sats[ns].radius * 8.0;
         sats[ns].parent = i;
+        sats[ns].ring = q;
         ns++;
       }
     }
@@ -266,9 +299,12 @@ Scene buildScene(float S, float2 res, thread Body* bodies, thread Sat* sats, thr
     ns = 0;
     float mu = 0.02 + pow(hash11(S + 14.0), 1.5) * 0.38;   // the secondary's share of the mass
     float R = 2.6 + hash11(S + 15.0);
-    float ang = hash11(S + 16.0) * 6.2831853;
-    float2 dir = float2(cos(ang), sin(ang)), perp = float2(-dir.y, dir.x);
     float m1 = 1.7 + hash11(S + 17.0) * 0.6, m2 = m1 * mu / (1.0 - mu);
+    fr.w2 = 0.35 * (m1 + m2) / (R * R * R);   // ω² = G(M1+M2)/R³, with G·M = 0.35·mass in the sheet's units
+    // the pair goes round the barycentre at ω; the co-rotating sheet, its lagrange points and the
+    // trojans all turn with it
+    float ang = hash11(S + 16.0) * 6.2831853 + sqrt(fr.w2) * clock;
+    float2 dir = float2(cos(ang), sin(ang)), perp = float2(-dir.y, dir.x);
     float2 P = -dir * R * mu, Q = dir * R * (1.0 - mu);   // barycentre at the origin
     bodies[0].mass = m1; bodies[1].mass = m2;
     bodies[0].pos = float3(P.x, 0.0, P.y); bodies[1].pos = float3(Q.x, 0.0, Q.y);
@@ -280,7 +316,6 @@ Scene buildScene(float S, float2 res, thread Body* bodies, thread Sat* sats, thr
       bodies[i].rot = 0.0;
     }
     center = 0.0;
-    fr.w2 = 0.35 * (m1 + m2) / (R * R * R);   // ω² = G(M1+M2)/R³, with G·M = 0.35·mass in the sheet's units
     // L4, L5: start at the equilateral points and walk uphill onto the softened surface's true tops
     for (int k = 0; k < 2; k++) {
       float2 L = P + (dir * 0.5 + perp * (k == 0 ? 0.8660254 : -0.8660254)) * R;
@@ -313,18 +348,23 @@ Scene buildScene(float S, float2 res, thread Body* bodies, thread Sat* sats, thr
       lag[k] = dir * 0.5 * (lo + hi);
       critH[k] = potential(lag[k], bodies, n, sats, ns, fr);
     }
-    // trojans: up to two test masses about each of L4 and L5, spread along the orbit
+    // trojans: up to two test masses librating about each of L4 and L5 — tadpole orbits from the
+    // linearised motion, long along the orbit and narrow across it, at the long-period frequency
+    float wl = sqrt(fr.w2) * sqrt(max(0.0, 0.5 * (1.0 - sqrt(max(0.0, 1.0 - 27.0 * mu * (1.0 - mu))))));
     for (int k = 0; k < 2; k++) {
       int count = int(hash11(S + 18.0 + float(k)) * 3.0);
       float2 tang = normalize(float2(-lag[3 + k].y, lag[3 + k].x));
       for (int s = 0; s < count && ns < MAX_SATS; s++) {
         float ks = S + 19.0 + float(k) * 7.0 + float(s) * 1.3;
-        float2 xz = lag[3 + k] + tang * (hash11(ks) - 0.5) * 0.5 * R + normalize(lag[3 + k]) * (hash11(ks + 1.0) - 0.5) * 0.06 * R;
+        float amp = (0.12 + hash11(ks) * 0.18) * R;
+        float ph = hash11(ks + 1.0) * 6.2831853 + wl * clock;
+        float2 xz = lag[3 + k] + tang * amp * sin(ph) + normalize(lag[3 + k]) * amp * 0.3 * cos(ph);
         sats[ns].pos = float3(xz.x, 0.0, xz.y);
         sats[ns].radius = 0.014 + hash11(ks + 2.0) * 0.016;
         sats[ns].mass = 0.0;
         sats[ns].soft = 1.0;
         sats[ns].parent = 1;
+        sats[ns].ring = -1;
         ns++;
       }
     }
@@ -342,20 +382,9 @@ Scene buildScene(float S, float2 res, thread Body* bodies, thread Sat* sats, thr
       bodies[i].ringY[q] = top + 0.03;
     }
   }
-  if (three) {
-    for (int i = 0; i < ns; i++) sats[i].pos.y = potential(sats[i].pos.xz, bodies, n, sats, ns, fr) + sats[i].radius;
-  } else for (int i = 0; i < ns; i++) {
-    // find the ring this satellite was placed on and sit on it
-    int p = sats[i].parent;
-    float best = 1e9, y = 0.0;
-    for (int q = 0; q < bodies[p].rings; q++) {
-      float2 d = sats[i].pos.xz - bodies[p].pos.xz;
-      float cr = cos(-bodies[p].rot), sr = sin(-bodies[p].rot);
-      float2 loc = float2(d.x * cr - d.y * sr, d.x * sr + d.y * cr);
-      float err = abs(length(loc / float2(bodies[p].ringA[q], bodies[p].ringB[q])) - 1.0);
-      if (err < best) { best = err; y = bodies[p].ringY[q]; }
-    }
-    sats[i].pos.y = y + sats[i].radius;
+  // satellites sit on their ring's plane; trojans sit on the sheet
+  for (int i = 0; i < ns; i++) {
+    sats[i].pos.y = (sats[i].ring < 0 ? potential(sats[i].pos.xz, bodies, n, sats, ns, fr) : bodies[sats[i].parent].ringY[sats[i].ring]) + sats[i].radius;
   }
 
   // camera: far and high over the cluster, close and medium, or grazing — down at the sheet
@@ -367,7 +396,7 @@ Scene buildScene(float S, float2 res, thread Body* bodies, thread Sat* sats, thr
   // (and its close shots stay high enough that the line of sight over a saddle lands on the dome,
   // not on the sky behind it)
   float el = WP_PARAM_el >= 0.0 ? WP_PARAM_el : (graze ? 0.07 + r3 * 0.13 : (close ? (three ? 0.36 : 0.22) : 0.42) + r3 * 0.36);
-  float az = WP_PARAM_az >= 0.0 ? WP_PARAM_az : hash11(S + 6.0) * 6.2831853;
+  float az = (WP_PARAM_az >= 0.0 ? WP_PARAM_az : hash11(S + 6.0) * 6.2831853) + WP_PARAM_spin * time;
   float3 target = center + float3(hash11(S + 7.0) - 0.5, 0.0, hash11(S + 8.0) - 0.5) * (close ? 2.5 : 1.0);
   target.y = graze ? -0.3 : (close ? -0.4 : -0.2);
   float3 ro = target + dist * float3(cos(el) * sin(az), sin(el), cos(el) * cos(az));
@@ -419,7 +448,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   Sat sats[MAX_SATS];
   float2 lag[5];
   float critH[3];
-  Scene sc = buildScene(S, u.res, bodies, sats, lag, critH);
+  Scene sc = buildScene(S, u.res, u.time, bodies, sats, lag, critH);
   UNPACK_SCENE(sc)
   float2 p = (uv - 0.5) * 2.0 * float2(aspect, 1.0) * tanHalf;
   float3 rd = normalize(fwd + right * p.x + up * p.y);
@@ -559,6 +588,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       float2 d = (ro + rd * tp).xz - bodies[i].pos.xz;
       float2 loc = float2(d.x * cr - d.y * sr, d.x * sr + d.y * cr);
       float a = bodies[i].ringA[k], b = bodies[i].ringB[k];
+      loc.x += a * ringEcc(bodies[i], k);   // the body is at a focus; the ellipse's centre is back along the axis
       float dist = abs(length(loc / float2(a, b)) - 1.0) * min(a, b);
       float lw = tp / pxPerUnit * 1.3 / sqrt(max(abs(rd.y), 0.05));
       float cov = 1.0 - smoothstep(0.4 * lw, 1.4 * lw, dist);
@@ -649,7 +679,7 @@ float4 wp_post(float2 uv, texture2d<float> scene, constant Uniforms& u) {
   Sat sats[MAX_SATS];
   float2 lag[5];
   float critH[3];
-  Scene sc = buildScene(S, u.res, bodies, sats, lag, critH);
+  Scene sc = buildScene(S, u.res, u.time, bodies, sats, lag, critH);
   UNPACK_SCENE(sc)
   float2 px = uv * u.res;
 
