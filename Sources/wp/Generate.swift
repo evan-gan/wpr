@@ -2,11 +2,11 @@ import AppKit
 import ArgumentParser
 
 enum Generator {
-  static func generate(_ m: Module, width: Int, height: Int, seed: UInt32, params: [String], to out: URL, verbose: Bool) throws {
+  static func generate(_ m: Module, width: Int, height: Int, seed: UInt32, params: [String], to out: URL, verbose: Bool, time: Float = 0) throws {
     switch m.host {
     case .metal:
       let source = try String(contentsOf: m.entryURL, encoding: .utf8)
-      let img = try MetalHost.render(source: source, width: width, height: height, seed: seed, params: params)
+      let img = try MetalHost.render(source: source, width: width, height: height, seed: seed, params: params, time: time)
       try MetalHost.writePNG(img, to: out)
     case .web:
       try FileManager.default.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -44,6 +44,7 @@ struct GenCommand: ParsableCommand {
   @Option(name: .long, help: "render at WxH instead of a display's size (implies --no-set)") var size: String?
   @Option(name: .shortAndLong, help: "write here instead of the generated dir") var out: String?
   @Option(name: .long, parsing: .upToNextOption, help: "module parameter, k=v (repeatable)") var set: [String] = []
+  @Option(name: .long, help: "animation time in seconds, for modules that move (metal only)") var time: Float = 0
   @Flag(name: .long, help: "write the file but don't set it as wallpaper") var noSet = false
   @Flag(name: .shortAndLong, help: "show host/module logs") var verbose = false
 
@@ -69,7 +70,7 @@ struct GenCommand: ParsableCommand {
       let start = Date()
       let url = out.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
         ?? cfg.generatedURL.appendingPathComponent("\(m.name)-\(seed)-\(t.w)x\(t.h).png")
-      try Generator.generate(m, width: t.w, height: t.h, seed: seed, params: set, to: url, verbose: verbose)
+      try Generator.generate(m, width: t.w, height: t.h, seed: seed, params: set, to: url, verbose: verbose, time: time)
       let ms = Int(Date().timeIntervalSince(start) * 1000)
       print("\(url.path)  seed=\(seed)  \(ms)ms")
       index?.add(generated: url, module: m, seed: seed, width: t.w, height: t.h)
