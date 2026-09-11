@@ -32,7 +32,12 @@
 #define WP_PARAM_speed 1.0
 #endif
 #ifndef WP_PARAM_spin
-#define WP_PARAM_spin 0.02
+#define WP_PARAM_spin -1.0   // negative = 0.02 rad/s, or 0 in ink mode
+#endif
+// `--set ink=1`: for a 1-bit e-paper panel. paper-white sheet, black contours, bowls darkening to
+// black at the floor, white bodies with a dark rim; no depth of field, no camera drift, no tonemap
+#ifndef WP_PARAM_ink
+#define WP_PARAM_ink 0.0
 #endif
 
 struct Body {
@@ -60,6 +65,11 @@ struct Palette {
 Palette palette(int i) {
   Palette p;
   p.lineAlpha = 0.85;
+  if (WP_PARAM_ink > 0.5) {
+    p.bg = 1.0; p.line = 0.0; p.lineHot = 0.1; p.dash = 0.2; p.orbit = 0.1; p.coreWhite = 1.0;
+    p.warm = 0.75; p.hot = 0.0; p.lineAlpha = 1.0;
+    return p;
+  }
   switch (i) {
     case 0:  // ember on teal: green sheet, red -> orange -> yellow floors
       p.bg = float3(0.004, 0.016, 0.014); p.line = float3(0.55, 0.62, 0.55); p.lineHot = float3(0.95, 0.85, 0.6);
@@ -208,7 +218,7 @@ void dashedString(float3 ro, float3 rd, float3 a, float3 b, float tLimit, float 
     float along = (float(k - 1) + uu) / float(K);
     prev = c;
     if (s > tLimit) continue;
-    float lw = s / pxPerUnit * 1.3;
+    float lw = s / pxPerUnit * 1.3 * (WP_PARAM_ink > 0.5 ? 2.0 : 1.0);
     float on = step(fract(along * len / 0.22), 0.55);
     float cov = (1.0 - smoothstep(0.4 * lw, 1.4 * lw, d)) * on;
     if (cov > dash) { dash = cov; dashFog = markFade(s, fogRate, camDist); }
@@ -396,7 +406,8 @@ Scene buildScene(float S, float2 res, float time, thread Body* bodies, thread Sa
   // (and its close shots stay high enough that the line of sight over a saddle lands on the dome,
   // not on the sky behind it)
   float el = WP_PARAM_el >= 0.0 ? WP_PARAM_el : (graze ? 0.07 + r3 * 0.13 : (close ? (three ? 0.36 : 0.22) : 0.42) + r3 * 0.36);
-  float az = (WP_PARAM_az >= 0.0 ? WP_PARAM_az : hash11(S + 6.0) * 6.2831853) + WP_PARAM_spin * time;
+  float spin = WP_PARAM_spin >= 0.0 ? WP_PARAM_spin : (WP_PARAM_ink > 0.5 ? 0.0 : 0.02);
+  float az = (WP_PARAM_az >= 0.0 ? WP_PARAM_az : hash11(S + 6.0) * 6.2831853) + spin * time;
   float3 target = center + float3(hash11(S + 7.0) - 0.5, 0.0, hash11(S + 8.0) - 0.5) * (close ? 2.5 : 1.0);
   target.y = graze ? -0.3 : (close ? -0.4 : -0.2);
   float3 ro = target + dist * float3(cos(el) * sin(az), sin(el), cos(el) * cos(az));
@@ -408,10 +419,10 @@ Scene buildScene(float S, float2 res, float time, thread Body* bodies, thread Sa
   float pxPerUnit = res.y / (2.0 * tanHalf);   // world -> pixels at distance 1
   // fog in proportion to the shot: a grazing camera a few units out wants the distance gone
   // much sooner than a high one, or far bowls' hot floors show through edge-on as pale streaks
-  float fogRate = max(0.055, 0.4 / dist);
+  float fogRate = max(0.055, 0.4 / dist) * (WP_PARAM_ink > 0.5 ? 0.3 : 1.0);   // a print keeps its far lines
   // depth of field, strongest on the grazing shots where it reads as macro
   float rd0 = hash11(S + 20.0);
-  float dof = WP_PARAM_dof >= 0.0 ? WP_PARAM_dof : (graze ? 0.7 + rd0 * 0.3 : (close ? 0.3 + rd0 * 0.4 : 0.15 + rd0 * 0.3));
+  float dof = WP_PARAM_dof >= 0.0 ? WP_PARAM_dof : (WP_PARAM_ink > 0.5 ? 0.0 : (graze ? 0.7 + rd0 * 0.3 : (close ? 0.3 + rd0 * 0.4 : 0.15 + rd0 * 0.3)));
   // focus on the subject: the body that looks biggest on screen, preferring one that is actually
   // in the frame — not the camera's target point, and not whichever small body sits nearest the
   // centre while the real subject is off to one side
@@ -437,7 +448,7 @@ Scene buildScene(float S, float2 res, float time, thread Body* bodies, thread Sa
 // the render code below reads the scene through these names (the arrays are the caller's)
 #define UNPACK_SCENE(sc) \
   int n = sc.n, ns = sc.ns; Frame fr = sc.fr; \
-  bool three = sc.three, graze = sc.graze; \
+  bool three = sc.three, graze = sc.graze, ink = WP_PARAM_ink > 0.5; \
   Palette pal = sc.pal; float3 center = sc.center, ro = sc.ro, fwd = sc.fwd, right = sc.right, up = sc.up; \
   float aspect = sc.aspect, tanHalf = sc.tanHalf, dist = sc.dist, pxPerUnit = sc.pxPerUnit, fogRate = sc.fogRate; \
   float camDist = dist;   /* the orbit loop shadows `dist` */
@@ -464,7 +475,8 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       sphereCov = cov;
       float3 nrm = normalize(ro + rd * t - bodies[i].pos);
       float rim = pow(1.0 - max(0.0, dot(nrm, -rd)), 2.0);
-      sphereCol = mix(bodies[i].core * 1.6, pal.hot * 2.0, rim * 0.7);
+      // in print: a white disc with a bold black rim
+      sphereCol = ink ? float3(1.0 - smoothstep(0.3, 0.55, rim)) : mix(bodies[i].core * 1.6, pal.hot * 2.0, rim * 0.7);
     }
   }
   for (int i = 0; i < ns; i++) {
@@ -476,7 +488,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       float3 nrm = normalize(ro + rd * t - sats[i].pos);
       float3 parentPos = bodies[sats[i].parent].pos;
       float lit = 0.35 + 0.65 * max(0.0, dot(nrm, normalize(parentPos - sats[i].pos)));
-      sphereCol = mix(float3(0.55, 0.55, 0.6), pal.hot, 0.3) * lit * 1.2;
+      sphereCol = ink ? float3(0.0) : mix(float3(0.55, 0.55, 0.6), pal.hot, 0.3) * lit * 1.2;   // print: a black dot
     }
   }
 
@@ -505,7 +517,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   // the sky is exactly the flat sheet's colour and the sheet fogs into it, so the sheet reads
   // as going on forever rather than ending at a horizon
   float3 sunDir = normalize(float3(0.3, 1.0, 0.25));
-  float3 sky = pal.bg * (0.5 + 0.5 * sunDir.y);
+  float3 sky = ink ? float3(1.0) : pal.bg * (0.5 + 0.5 * sunDir.y);
   float3 col = sky;
   bool sphereFront = tS < t || (!hit && tS < 1e8);
   float tLimit = sphereFront ? tS : (hit ? t : 1e9);
@@ -534,7 +546,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     }
     depth = pow(depth, 0.25);
     float lambert = max(0.0, dot(nrm, sunDir));
-    col = pal.bg * (0.5 + 0.5 * lambert);
+    col = ink ? pal.bg : pal.bg * (0.5 + 0.5 * lambert);   // paper isn't lit
     col = mix(col, pal.warm, smoothstep(0.25, 0.6, depth));
     col = mix(col, pal.hot, smoothstep(0.6, 1.0, depth) * 0.85);
 
@@ -543,7 +555,8 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     float f = h * levels;
     float fw = levels * length(g) * pixelWorld / facing + 1e-5;
     float dl = min(fract(f), 1.0 - fract(f));
-    float line = 1.0 - smoothstep(0.3 * fw, 1.2 * fw, dl);
+    float wide = ink ? 2.5 : 1.0;   // a 1 px line doesn't survive 1 bit
+    float line = 1.0 - smoothstep(0.3 * fw * wide, 1.2 * fw * wide, dl);
     float crowd = 1.0 - smoothstep(0.28, 0.55, fw);
     // contours brighten down the bowl, then go dark on the hot floor so they stay legible
     float3 lineCol = mix(pal.line, pal.lineHot, smoothstep(0.2, 0.6, depth));
@@ -573,7 +586,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
     }
     col = mix(col, lineCol, line * crowd * pal.lineAlpha * lineFog);
     col = mix(col, pal.lineHot, crit * 0.9 * lineFog);
-    col *= edge;
+    col = mix(ink ? sky : float3(0.0), col, edge);   // past the disc: the void, or in print, paper
     col = mix(col, sky, 1.0 - fog);
   }
 
@@ -590,7 +603,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       float a = bodies[i].ringA[k], b = bodies[i].ringB[k];
       loc.x += a * ringEcc(bodies[i], k);   // the body is at a focus; the ellipse's centre is back along the axis
       float dist = abs(length(loc / float2(a, b)) - 1.0) * min(a, b);
-      float lw = tp / pxPerUnit * 1.3 / sqrt(max(abs(rd.y), 0.05));
+      float lw = tp / pxPerUnit * 1.3 / sqrt(max(abs(rd.y), 0.05)) * (ink ? 2.0 : 1.0);
       float cov = 1.0 - smoothstep(0.4 * lw, 1.4 * lw, dist);
       if (cov > orbit) { orbit = cov; orbitFog = markFade(tp, fogRate, camDist); }
     }
@@ -753,8 +766,12 @@ float4 wp_post(float2 uv, texture2d<float> scene, constant Uniforms& u) {
     col = mix(col, pal.line * 1.5, ui * 0.9);
   }
 
-  col *= 1.0 - 0.3 * dot(uv - 0.5, uv - 0.5);
-  col = col / (1.0 + col * 0.35);
+  if (WP_PARAM_ink > 0.5) {
+    col = clamp(col, 0.0, 1.0);   // paper stays paper: no vignette, no tonemap
+  } else {
+    col *= 1.0 - 0.3 * dot(uv - 0.5, uv - 0.5);
+    col = col / (1.0 + col * 0.35);
+  }
   col = pow(max(col, 0.0), float3(1.0 / 2.2));
   col += (hash21(uv * u.res + S) - 0.5) * 0.008;
   return float4(min(col, 1.0), 1.0);
