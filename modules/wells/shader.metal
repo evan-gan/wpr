@@ -36,7 +36,8 @@
 #endif
 // `--set ink=1`: for a 1-bit e-paper panel. paper-white sheet, black contours, bowls darkening to
 // black at the floor, white bodies with a dark rim, big massless satellite dots, a slow camera
-// drift so the frame visibly moves; no depth of field, no tonemap
+// drift so the frame visibly moves; no depth of field, no tonemap. `ink=2` is the same print
+// white on black
 #ifndef WP_PARAM_ink
 #define WP_PARAM_ink 0.0
 #endif
@@ -66,7 +67,12 @@ struct Palette {
 Palette palette(int i) {
   Palette p;
   p.lineAlpha = 0.85;
-  if (WP_PARAM_ink > 0.5) {
+  if (WP_PARAM_ink > 1.5) {   // ink=2: the same print, white on black
+    p.bg = 0.0; p.line = 1.0; p.lineHot = 0.9; p.dash = 0.8; p.orbit = 0.9; p.coreWhite = 1.0;
+    p.warm = 0.3; p.hot = 1.0; p.lineAlpha = 1.0;
+    return p;
+  }
+  if (WP_PARAM_ink > 0.5) {   // ink=1: black on white
     p.bg = 1.0; p.line = 0.0; p.lineHot = 0.1; p.dash = 0.2; p.orbit = 0.1; p.coreWhite = 1.0;
     p.warm = 0.75; p.hot = 0.0; p.lineAlpha = 1.0;
     return p;
@@ -479,8 +485,8 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       sphereCov = cov;
       float3 nrm = normalize(ro + rd * t - bodies[i].pos);
       float rim = pow(1.0 - max(0.0, dot(nrm, -rd)), 2.0);
-      // in print: a white disc with a bold black rim
-      sphereCol = ink ? float3(1.0 - smoothstep(0.3, 0.55, rim)) : mix(bodies[i].core * 1.6, pal.hot * 2.0, rim * 0.7);
+      // in print: a white disc with a bold black rim (on black paper, just the disc)
+      sphereCol = ink ? float3(WP_PARAM_ink > 1.5 ? 1.0 : 1.0 - smoothstep(0.3, 0.55, rim)) : mix(bodies[i].core * 1.6, pal.hot * 2.0, rim * 0.7);
     }
   }
   for (int i = 0; i < ns; i++) {
@@ -492,7 +498,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
       float3 nrm = normalize(ro + rd * t - sats[i].pos);
       float3 parentPos = bodies[sats[i].parent].pos;
       float lit = 0.35 + 0.65 * max(0.0, dot(nrm, normalize(parentPos - sats[i].pos)));
-      sphereCol = ink ? float3(0.0) : mix(float3(0.55, 0.55, 0.6), pal.hot, 0.3) * lit * 1.2;   // print: a black dot
+      sphereCol = ink ? float3(WP_PARAM_ink > 1.5 ? 1.0 : 0.0) : mix(float3(0.55, 0.55, 0.6), pal.hot, 0.3) * lit * 1.2;   // print: a dot
     }
   }
 
@@ -521,7 +527,7 @@ float4 wp_main(float2 uv, constant Uniforms& u) {
   // the sky is exactly the flat sheet's colour and the sheet fogs into it, so the sheet reads
   // as going on forever rather than ending at a horizon
   float3 sunDir = normalize(float3(0.3, 1.0, 0.25));
-  float3 sky = ink ? float3(1.0) : pal.bg * (0.5 + 0.5 * sunDir.y);
+  float3 sky = ink ? pal.bg : pal.bg * (0.5 + 0.5 * sunDir.y);   // print: the paper, whichever colour it is
   float3 col = sky;
   bool sphereFront = tS < t || (!hit && tS < 1e8);
   float tLimit = sphereFront ? tS : (hit ? t : 1e9);
