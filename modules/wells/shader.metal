@@ -32,10 +32,11 @@
 #define WP_PARAM_speed 1.0
 #endif
 #ifndef WP_PARAM_spin
-#define WP_PARAM_spin -1.0   // negative = 0.02 rad/s, or 0 in ink mode
+#define WP_PARAM_spin -1.0   // negative = 0.02 rad/s, or 0.05 in ink mode
 #endif
 // `--set ink=1`: for a 1-bit e-paper panel. paper-white sheet, black contours, bowls darkening to
-// black at the floor, white bodies with a dark rim; no depth of field, no camera drift, no tonemap
+// black at the floor, white bodies with a dark rim, big massless satellite dots, a slow camera
+// drift so the frame visibly moves; no depth of field, no tonemap
 #ifndef WP_PARAM_ink
 #define WP_PARAM_ink 0.0
 #endif
@@ -287,8 +288,10 @@ Scene buildScene(float S, float2 res, float time, thread Body* bodies, thread Sa
         // a kepler orbit on this ring: starting phase by seed, advancing at the ring's mean motion
         float2 xz = ringOrbit(bodies[i], q, hash11(ks) * 6.2831853 + ringRate(bodies[i], q) * clock);
         sats[ns].pos = float3(xz.x, 0.0, xz.y);
-        sats[ns].radius = 0.016 + hash11(ks + 1.0) * 0.02;
-        sats[ns].mass = 0.006 + hash11(ks + 2.0) * 0.014;
+        sats[ns].radius = (0.016 + hash11(ks + 1.0) * 0.02) * (WP_PARAM_ink > 0.5 ? 1.8 : 1.0);   // dots you can see in print
+        // in print they're massless: a moving dimple shifts the whole sheet by a hair, and on a
+        // 1-bit panel that re-decides dithered pixels everywhere — a moving dot changes a few rows
+        sats[ns].mass = WP_PARAM_ink > 0.5 ? 0.0 : 0.006 + hash11(ks + 2.0) * 0.014;
         sats[ns].soft = sats[ns].radius * 8.0;
         sats[ns].parent = i;
         sats[ns].ring = q;
@@ -406,7 +409,8 @@ Scene buildScene(float S, float2 res, float time, thread Body* bodies, thread Sa
   // (and its close shots stay high enough that the line of sight over a saddle lands on the dome,
   // not on the sky behind it)
   float el = WP_PARAM_el >= 0.0 ? WP_PARAM_el : (graze ? 0.07 + r3 * 0.13 : (close ? (three ? 0.36 : 0.22) : 0.42) + r3 * 0.36);
-  float spin = WP_PARAM_spin >= 0.0 ? WP_PARAM_spin : (WP_PARAM_ink > 0.5 ? 0.0 : 0.02);
+  // in print the camera drifts faster: at a panel's frame rate the satellites alone read as still
+  float spin = WP_PARAM_spin >= 0.0 ? WP_PARAM_spin : (WP_PARAM_ink > 0.5 ? 0.05 : 0.02);
   float az = (WP_PARAM_az >= 0.0 ? WP_PARAM_az : hash11(S + 6.0) * 6.2831853) + spin * time;
   float3 target = center + float3(hash11(S + 7.0) - 0.5, 0.0, hash11(S + 8.0) - 0.5) * (close ? 2.5 : 1.0);
   target.y = graze ? -0.3 : (close ? -0.4 : -0.2);
