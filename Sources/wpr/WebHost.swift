@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import WebKit
 
 // renders a web module in an offscreen WKWebView. the checkout is served over the wpr:// scheme
@@ -129,17 +130,8 @@ enum WebHost {
     }
     func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
 
-    func contentType(_ ext: String) -> String {
-      switch ext.lowercased() {
-      case "html": "text/html; charset=utf-8"
-      case "js", "mjs": "text/javascript; charset=utf-8"
-      case "css": "text/css; charset=utf-8"
-      case "json": "application/json"
-      case "wasm": "application/wasm"
-      case "png", "jpg", "jpeg", "webp", "gif": "image/\(ext.lowercased() == "jpg" ? "jpeg" : ext.lowercased())"
-      case "woff", "woff2": "font/\(ext.lowercased())"
-      default: "application/octet-stream"
-      }
+    func contentType(_ pathExtension: String) -> String {
+      UTType(filenameExtension: pathExtension)?.preferredMIMEType ?? "application/octet-stream"
     }
   }
 }

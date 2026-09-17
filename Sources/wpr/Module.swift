@@ -10,7 +10,7 @@ struct Module: Decodable {
   let timeoutMs: Int?
   var dir = URL(fileURLWithPath: "/")
 
-  enum Host: String, Decodable { case metal, web, exec }
+  enum Host: String, Decodable { case metal, web }
 
   private enum CodingKeys: String, CodingKey { case name, description, host, entry, timeoutMs = "timeout_ms" }
 

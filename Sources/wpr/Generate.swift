@@ -11,13 +11,6 @@ enum Generator {
     case .web:
       let image = try await WebHost.render(module: m, width: width, height: height, seed: seed, params: params, verbose: verbose)
       try MetalHost.writePNG(image, to: out)
-    case .exec:
-      try FileManager.default.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
-      var args = ["--width", "\(width)", "--height", "\(height)", "--seed", "\(seed)", "--out", out.path]
-      for p in params { args += ["--param", p] }
-      let r = try Subprocess.run(executable: m.entryURL.path, arguments: args, cwd: m.dir)
-      if verbose || r.status != 0 { FileHandle.standardError.write((r.stdout + r.stderr).data(using: .utf8)!) }
-      if r.status != 0 { throw WPError("\(m.name) exited \(r.status)") }
     }
     guard FileManager.default.fileExists(atPath: out.path) else {
       throw WPError("\(m.name) finished but didn't write \(out.path)")
