@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-  name: "wp",
+  name: "wpr",
   platforms: [.macOS(.v14)],
   dependencies: [
     .package(url: "https://github.com/apple/swift-argument-parser", from: "1.5.0"),
@@ -10,12 +10,12 @@ let package = Package(
   ],
   targets: [
     .executableTarget(
-      name: "wp",
+      name: "wpr",
       dependencies: [
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
         .product(name: "TOMLKit", package: "TOMLKit"),
       ],
-      path: "Sources/wp"
+      path: "Sources/wpr"
     ),
   ]
 )
