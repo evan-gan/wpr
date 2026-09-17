@@ -1,0 +1,4 @@
+name = "melange"
+description = "gold glitter dust drifting over a dark ground, after Espeset's Diamond Dust"
+host = "metal"
+entry = "shader.metal"
