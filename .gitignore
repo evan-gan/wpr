@@ -4,3 +4,4 @@ config.toml
 .DS_Store
 *.xcodeproj
 .swiftpm/
+dist/

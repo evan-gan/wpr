@@ -1,0 +1,15 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v7
+      - run: make dist VERSION=$GITHUB_REF_NAME
+      - run: gh release create "$GITHUB_REF_NAME" --generate-notes dist/*.tar.gz dist/*.sha256
+        env:
+          GH_TOKEN: ${{ github.token }}
