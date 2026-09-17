@@ -4,16 +4,14 @@ import ArgumentParser
 struct TimerCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "timer",
-    abstract: "run `wp tick` on a schedule via launchd",
+    abstract: "run `wpr tick` on a schedule via launchd",
     subcommands: [Install.self, Uninstall.self, Status.self],
     defaultSubcommand: Status.self
   )
 
-  static let label = "dev.maxwofford.wp"
-  static var home: URL { FileManager.default.homeDirectoryForCurrentUser }
-  static var plistURL: URL { home.appendingPathComponent("Library/LaunchAgents/\(label).plist") }
-  static var logURL: URL { home.appendingPathComponent("Library/Logs/wp.log") }
-  static var binURL: URL { home.appendingPathComponent(".local/bin/wp") }
+  static let label = "com.maxwofford.wpr"
+  static var plistURL: URL { URL.homeDirectory.appending(path: "Library/LaunchAgents/\(label).plist") }
+  static var logURL: URL { URL.libraryDirectory.appending(path: "Logs/wpr.log") }
   static var domain: String { "gui/\(getuid())" }
 
   struct Install: ParsableCommand {
@@ -24,17 +22,15 @@ struct TimerCommand: ParsableCommand {
     func run() throws {
       let cfg = try Root.config()
       let seconds = try parseDuration(every ?? cfg.rotation.interval)
-      guard FileManager.default.isExecutableFile(atPath: binURL.path) else {
-        throw WPError("\(binURL.path) doesn't exist — run `make install` first so launchd has a stable path")
-      }
+      // launchd runs whichever binary installed it
+      guard let program = Bundle.main.executableURL else { throw WPError("can't tell where this binary is") }
       let plist: [String: Any] = [
         "Label": label,
-        "ProgramArguments": [binURL.path, "tick"],
+        "ProgramArguments": [program.path, "tick"],
         "StartInterval": seconds,
         "RunAtLoad": true,
         "StandardOutPath": logURL.path,
         "StandardErrorPath": logURL.path,
-        "EnvironmentVariables": ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:\(home.path)/.bun/bin"],
       ]
       try FileManager.default.createDirectory(at: plistURL.deletingLastPathComponent(), withIntermediateDirectories: true)
       let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
@@ -42,7 +38,7 @@ struct TimerCommand: ParsableCommand {
       try data.write(to: plistURL)
       let r = launchctl("bootstrap", domain, plistURL.path)
       guard r.status == 0 else { throw WPError("launchctl bootstrap failed: \(r.stderr)") }
-      print("installed \(label): `wp tick` every \(every ?? cfg.rotation.interval), log at \(logURL.path)")
+      print("installed \(label): `\(program.path) tick` every \(every ?? cfg.rotation.interval), log at \(logURL.path)")
     }
   }
 
