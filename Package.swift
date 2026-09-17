@@ -12,7 +12,8 @@ let package = Package(
     .target(
       name: "WPCore",
       dependencies: [.product(name: "TOMLKit", package: "TOMLKit")],
-      path: "Sources/WPCore"
+      path: "Sources/WPCore",
+      resources: [.embedInCode("config.default.toml")]
     ),
     .executableTarget(
       name: "wpr",
