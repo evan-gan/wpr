@@ -1,0 +1,4 @@
+name = "aurora"
+description = "aurora over still water under a star field, after nimitz's Auroras"
+host = "metal"
+entry = "shader.metal"
