@@ -5,9 +5,7 @@ import ImageIO
 import UniformTypeIdentifiers
 
 enum Thumbs {
-  static var dir: URL {
-    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/wp/thumbs")
-  }
+  static var dir: URL { Root.dataDirectory.appending(path: "thumbs") }
 
   static func key(_ path: String) -> String {
     String(SHA256.hash(data: Data(path.utf8)).map { String(format: "%02x", $0) }.joined().prefix(24))
@@ -118,7 +116,7 @@ struct UICommand: ParsableCommand {
     let wpBin = Bundle.main.executableURL?.standardizedFileURL.path ?? CommandLine.arguments[0]
     let p = Process()
     p.executableURL = URL(fileURLWithPath: try WebHost.bunPath())
-    p.arguments = [root.appendingPathComponent("hosts/ui/server.ts").path, "--port", "\(port)", "--wp", wpBin]
+    p.arguments = [root.appendingPathComponent("hosts/ui/server.ts").path, "--port", "\(port)", "--wp", wpBin, "--thumbs", Thumbs.dir.path]
     var env = ProcessInfo.processInfo.environment
     env["WP_ROOT"] = root.path
     p.environment = env

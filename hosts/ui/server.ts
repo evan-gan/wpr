@@ -1,13 +1,12 @@
 // the gallery server: serves ui.html, thumbnails, and proxies every action through `wp` itself
 import { join, basename, resolve } from "node:path";
-import { homedir } from "node:os";
 
 const flags: Record<string, string> = {};
 for (let i = 2; i < Bun.argv.length; i++) if (Bun.argv[i].startsWith("--")) flags[Bun.argv[i].slice(2)] = Bun.argv[++i];
 const port = Number(flags.port ?? 4747);
 const wp = flags.wp ?? "wp";
 const root = process.env.WP_ROOT ?? resolve(import.meta.dir, "../..");
-const thumbsDir = join(homedir(), "Library/Application Support/wp/thumbs");
+const thumbsDir = flags.thumbs;
 const page = Bun.file(join(import.meta.dir, "ui.html"));
 
 const chromeNoise = /CVDisplayLink|allocator multiple|task_policy_set|GL_INVALID_OPERATION/;

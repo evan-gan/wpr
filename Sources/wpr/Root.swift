@@ -64,7 +64,7 @@ struct Config: Decodable {
   init(from d: Decoder) throws {
     let c = try d.container(keyedBy: K.self)
     library = try c.decode(String.self, forKey: .library)
-    generated = try c.decodeIfPresent(String.self, forKey: .generated) ?? "~/Library/Application Support/wp/generated"
+    generated = try c.decodeIfPresent(String.self, forKey: .generated) ?? Root.dataDirectory.appending(path: "generated").path
     sources = try c.decodeIfPresent(Sources.self, forKey: .sources) ?? Sources(enabled: [])
     rotation = try c.decodeIfPresent(Rotation.self, forKey: .rotation) ?? Rotation()
     pool = try c.decodeIfPresent(Pool.self, forKey: .pool) ?? Pool()
@@ -81,9 +81,9 @@ enum Root {
     return found
   }
 
-  static var configURL: URL {
-    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/wpr/config.toml")
-  }
+  static var configURL: URL { URL.homeDirectory.appending(path: ".config/wpr/config.toml") }
+  /// the index, thumbnails, and generated wallpapers
+  static var dataDirectory: URL { URL.applicationSupportDirectory.appending(path: "wpr") }
   static func modulesDir() throws -> URL { try url().appendingPathComponent("modules") }
 
   // first run copies config.default.toml into place so there's something to edit

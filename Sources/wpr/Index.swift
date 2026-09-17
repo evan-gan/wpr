@@ -34,10 +34,7 @@ struct Index: Codable {
   // display uuid -> when a human last set its wallpaper; tick leaves those alone for rotation.hold_manual
   var manualSets: [String: Date] = [:]
 
-  static var fileURL: URL {
-    FileManager.default.homeDirectoryForCurrentUser
-      .appendingPathComponent("Library/Application Support/wp/index.json")
-  }
+  static var fileURL: URL { Root.dataDirectory.appending(path: "index.json") }
 
   static func load() throws -> Index {
     guard FileManager.default.fileExists(atPath: fileURL.path) else {
