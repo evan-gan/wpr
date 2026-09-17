@@ -58,3 +58,94 @@ struct SetCommand: ParsableCommand {
     try index.save()
   }
 }
+
+struct NextCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "next", abstract: "pick a new wallpaper for each display, aspect-aware")
+
+  @Option(name: .shortAndLong, help: "display index, name substring, or 'all'") var display: String?
+  @Option(name: .shortAndLong, help: "restrict to one source (folder or module)") var source: String?
+  @Flag(name: .long, help: "print the pick without setting it") var dryRun = false
+
+  func run() throws {
+    let configuration = try Root.config()
+    var index = try Index.load()
+    let picker = Picker(configuration: configuration, index: index)
+    var used = Set<String>()
+    for screen in try Screen.select(display) {
+      guard let entry = picker.pick(for: screen, source: source, avoiding: used) else {
+        print("\(screen.index) \(screen.name): nothing eligible (enabled: \(configuration.sources.enabled.joined(separator: ", ")))")
+        continue
+      }
+      let candidate = entry.candidate
+      used.insert(candidate.path)
+      let luminance = candidate.palette.map { String(format: " lum %.2f", $0.luminance) } ?? ""
+      print("\(screen.index) \(screen.name) <- \(candidate.source)/\(candidate.name)  fit \(String(format: "%.2f", entry.fit)) res \(String(format: "%.2f", entry.resolution))\(luminance)\(dryRun ? "  (dry run)" : "")")
+      if !dryRun {
+        try NSWorkspace.shared.setDesktopImageURL(candidate.url, for: screen.nsScreen, options: Fill.crop.options)
+        index.markShown(candidate.path)
+        index.markManual(screen)
+      }
+    }
+    if !dryRun { try index.save() }
+  }
+}
+
+struct LsCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "ls", abstract: "list indexed wallpapers, optionally scored against a display")
+
+  @Option(name: .long, help: "score fit against this display (index or name)") var fit: String?
+  @Option(name: .shortAndLong, help: "only this source") var source: String?
+  @Flag(name: .long, help: "include disabled sources") var all = false
+
+  func run() throws {
+    let configuration = try Root.config()
+    let index = try Index.load()
+    var rows = index.candidates.values.filter { candidate in
+      (all || configuration.sources.enabled.contains(candidate.source)) && (source == nil || candidate.source == source)
+    }
+    if let fit, let screen = try Screen.select(fit).first {
+      rows.sort {
+        Fit.score(imageAspect: $0.aspect, displayAspect: screen.aspect) > Fit.score(imageAspect: $1.aspect, displayAspect: screen.aspect)
+      }
+      print("   fit   res   lum   size         source            name")
+      for candidate in rows {
+        let fitScore = Fit.score(imageAspect: candidate.aspect, displayAspect: screen.aspect)
+        let resolution = Fit.resolution(candidate, screen)
+        let eligible = fitScore >= configuration.rotation.minFit && resolution >= configuration.rotation.minRes && Fit.sizeAllowed(candidate, screen)
+        print("\(eligible ? " " : "x") \(String(format: "%.2f  %.2f  %@", fitScore, resolution, luminanceText(candidate)))  \("\(candidate.width)x\(candidate.height)".pad(11))  \(candidate.source.pad(16))  \(candidate.name)")
+      }
+    } else {
+      rows.sort { ($0.source, $0.name) < ($1.source, $1.name) }
+      print("lum   size         source            name")
+      for candidate in rows {
+        print("\(luminanceText(candidate))  \("\(candidate.width)x\(candidate.height)".pad(11))  \(candidate.source.pad(16))  \(candidate.name)")
+      }
+    }
+    print("\(rows.count) candidates")
+  }
+
+  private func luminanceText(_ candidate: Candidate) -> String {
+    candidate.palette.map { String(format: "%.2f", $0.luminance) } ?? " -- "
+  }
+}
+
+struct ScanCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "scan", abstract: "re-index the library and generated wallpapers")
+
+  @Flag(name: .shortAndLong) var verbose = false
+
+  func run() throws {
+    var index = (try? Index.load()) ?? Index()
+    try index.scan(verbose: verbose)
+    try index.save()
+    let counts = Dictionary(grouping: index.candidates.values, by: \.source).mapValues(\.count)
+    for (source, count) in counts.sorted(by: { $0.key < $1.key }) { print("\(source.pad(18)) \(count)") }
+    print("\(index.candidates.count) candidates -> \(Index.fileURL.path)")
+  }
+}
+
+extension String {
+  func pad(_ width: Int) -> String {
+    count >= width ? self : self + String(repeating: " ", count: width - count)
+  }
+}

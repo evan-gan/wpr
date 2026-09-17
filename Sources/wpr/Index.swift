@@ -179,9 +179,3 @@ enum ImageInfo {
     return Palette(dominant: dominant, luminance: luminance / Double(pixelCount), saturation: saturation / Double(pixelCount), warmth: warmth / Double(pixelCount))
   }
 }
-
-extension String {
-  func pad(_ width: Int) -> String {
-    count >= width ? self : self + String(repeating: " ", count: width - count)
-  }
-}
