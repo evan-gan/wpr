@@ -81,15 +81,18 @@ enum Root {
     return found
   }
 
-  static func configURL() throws -> URL { try url().appendingPathComponent("config.toml") }
+  static var configURL: URL {
+    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/wpr/config.toml")
+  }
   static func modulesDir() throws -> URL { try url().appendingPathComponent("modules") }
 
   // first run copies config.default.toml into place so there's something to edit
   static func config() throws -> Config {
-    let file = try configURL()
+    let file = configURL
     if !FileManager.default.fileExists(atPath: file.path) {
+      try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
       try FileManager.default.copyItem(at: try url().appendingPathComponent("config.default.toml"), to: file)
-      FileHandle.standardError.write("wp: created \(file.path) — set `library` to your wallpapers folder\n".data(using: .utf8)!)
+      FileHandle.standardError.write("wpr: created \(file.path) — set `library` to your wallpapers folder\n".data(using: .utf8)!)
     }
     let text = try String(contentsOf: file, encoding: .utf8)
     return try TOMLDecoder().decode(Config.self, from: text)
