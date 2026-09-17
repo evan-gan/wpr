@@ -10,7 +10,6 @@ struct WP: ParsableCommand {
       CommandGroup(name: "sources", subcommands: [SourcesCommand.self, EnableCommand.self, DisableCommand.self, ScanCommand.self]),
       CommandGroup(name: "generators", subcommands: [GenCommand.self, StreamCommand.self, ModulesCommand.self]),
       CommandGroup(name: "automation", subcommands: [TickCommand.self, TimerCommand.self]),
-      CommandGroup(name: "gallery", subcommands: [UICommand.self, StateCommand.self]),
     ]
   )
 
