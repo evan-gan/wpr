@@ -9,11 +9,16 @@ let package = Package(
     .package(url: "https://github.com/LebJe/TOMLKit", from: "0.6.0"),
   ],
   targets: [
+    .target(
+      name: "WPCore",
+      dependencies: [.product(name: "TOMLKit", package: "TOMLKit")],
+      path: "Sources/WPCore"
+    ),
     .executableTarget(
       name: "wpr",
       dependencies: [
+        "WPCore",
         .product(name: "ArgumentParser", package: "swift-argument-parser"),
-        .product(name: "TOMLKit", package: "TOMLKit"),
       ],
       path: "Sources/wpr"
     ),

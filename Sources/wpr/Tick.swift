@@ -1,5 +1,6 @@
 import AppKit
 import ArgumentParser
+import WPCore
 
 struct TickCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(

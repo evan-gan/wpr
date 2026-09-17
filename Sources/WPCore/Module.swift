@@ -1,22 +1,21 @@
 import Foundation
-import ArgumentParser
 import TOMLKit
 
-struct Module: Decodable {
-  let name: String
-  let description: String
-  let host: Host
-  let entry: String
-  let timeoutMs: Int?
-  var directory = URL(fileURLWithPath: "/")
+public struct Module: Decodable {
+  public let name: String
+  public let description: String
+  public let host: Host
+  public let entry: String
+  public let timeoutMs: Int?
+  public var directory = URL(fileURLWithPath: "/")
 
-  enum Host: String, Decodable { case metal, web }
+  public enum Host: String, Decodable { case metal, web }
 
   private enum CodingKeys: String, CodingKey { case name, description, host, entry, timeoutMs = "timeout_ms" }
 
-  var entryURL: URL { directory.appendingPathComponent(entry) }
+  public var entryURL: URL { directory.appendingPathComponent(entry) }
 
-  static func discover() throws -> [Module] {
+  public static func discover() throws -> [Module] {
     let fileManager = FileManager.default
     let modulesDirectory = try Root.modulesDir()
     guard let folderNames = try? fileManager.contentsOfDirectory(atPath: modulesDirectory.path) else { return [] }
@@ -30,10 +29,10 @@ struct Module: Decodable {
     }
   }
 
-  static func named(_ name: String) throws -> Module {
+  public static func named(_ name: String) throws -> Module {
     let all = try discover()
     guard let module = all.first(where: { $0.name == name }) else {
-      throw ValidationError("no module '\(name)' (have: \(all.map(\.name).joined(separator: ", ")))")
+      throw WPError("no module '\(name)' (have: \(all.map(\.name).joined(separator: ", ")))")
     }
     return module
   }

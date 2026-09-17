@@ -1,4 +1,5 @@
 import ArgumentParser
+import WPCore
 
 struct SourcesCommand: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "sources", abstract: "list folders and modules and whether they're in rotation")

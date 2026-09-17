@@ -1,13 +1,11 @@
 import Foundation
-import ArgumentParser
-
-enum SourceToggle {
+public enum SourceToggle {
   // rewrites just the `enabled = [...]` line so the rest of config.toml (comments included) survives
-  static func set(_ names: [String], enabled: Bool) throws {
+  public static func set(_ names: [String], enabled: Bool) throws {
     let known = Set(try Index.load().candidates.values.map(\.source)).union(try Module.discover().map(\.name))
     let unknown = names.filter { !known.contains($0) }
     guard unknown.isEmpty else {
-      throw ValidationError("unknown source(s): \(unknown.joined(separator: ", ")). known: \(known.sorted().joined(separator: ", "))")
+      throw WPError("unknown source(s): \(unknown.joined(separator: ", ")). known: \(known.sorted().joined(separator: ", "))")
     }
 
     let url = Root.configURL

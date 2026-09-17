@@ -1,5 +1,6 @@
 import Foundation
 import ArgumentParser
+import WPCore
 
 struct TimerCommand: ParsableCommand {
   static let configuration = CommandConfiguration(
@@ -21,7 +22,7 @@ struct TimerCommand: ParsableCommand {
 
     func run() throws {
       let configuration = try Root.config()
-      let seconds = try parseDuration(every ?? configuration.rotation.interval)
+      let seconds = try Interval.parse(every ?? configuration.rotation.interval)
       // launchd runs whichever binary installed it
       guard let program = Bundle.main.executableURL else { throw WPError("can't tell where this binary is") }
       let plist: [String: Any] = [
@@ -88,19 +89,5 @@ struct TimerCommand: ParsableCommand {
   static func launchctl(_ arguments: String...) -> Subprocess.Result {
     (try? Subprocess.run(executable: "/bin/launchctl", arguments: arguments))
       ?? Subprocess.Result(status: -1, stdout: "", stderr: "couldn't run launchctl")
-  }
-
-  static func parseDuration(_ text: String) throws -> Int {
-    let trimmed = text.trimmingCharacters(in: .whitespaces).lowercased()
-    let unit: Int
-    let digits: Substring
-    switch trimmed.last {
-    case "h": unit = 3600; digits = trimmed.dropLast()
-    case "m": unit = 60; digits = trimmed.dropLast()
-    case "s": unit = 1; digits = trimmed.dropLast()
-    default: unit = 1; digits = Substring(trimmed)
-    }
-    guard let number = Int(digits), number > 0 else { throw ValidationError("bad duration '\(text)' (try 30m, 2h, 900s)") }
-    return number * unit
   }
 }

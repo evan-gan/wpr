@@ -2,41 +2,41 @@ import Foundation
 import CoreGraphics
 import ImageIO
 
-struct Palette: Codable {
-  var dominant: [String]
-  var luminance: Double
-  var saturation: Double
-  var warmth: Double
+public struct Palette: Codable {
+  public var dominant: [String]
+  public var luminance: Double
+  public var saturation: Double
+  public var warmth: Double
 }
 
-struct Candidate: Codable {
-  enum Kind: String, Codable { case library, generated }
+public struct Candidate: Codable {
+  public enum Kind: String, Codable { case library, generated }
 
-  var path: String
-  var source: String
-  var kind: Kind
-  var width: Int
-  var height: Int
-  var module: String?
-  var seed: UInt32?
-  var palette: Palette?
-  var indexedAt: Date
-  var lastShown: Date?
-  var shownCount = 0
+  public var path: String
+  public var source: String
+  public var kind: Kind
+  public var width: Int
+  public var height: Int
+  public var module: String?
+  public var seed: UInt32?
+  public var palette: Palette?
+  public var indexedAt: Date
+  public var lastShown: Date?
+  public var shownCount = 0
 
-  var url: URL { URL(fileURLWithPath: path) }
-  var aspect: Double { Double(width) / Double(height) }
-  var name: String { url.lastPathComponent }
+  public var url: URL { URL(fileURLWithPath: path) }
+  public var aspect: Double { Double(width) / Double(height) }
+  public var name: String { url.lastPathComponent }
 }
 
-struct Index: Codable {
-  var candidates: [String: Candidate] = [:]
+public struct Index: Codable {
+  public var candidates: [String: Candidate] = [:]
   // display uuid -> when a human last set its wallpaper; tick leaves those alone for rotation.hold_manual
-  var manualSets: [String: Date] = [:]
+  public var manualSets: [String: Date] = [:]
 
-  static var fileURL: URL { Root.dataDirectory.appending(path: "index.json") }
+  public static var fileURL: URL { Root.dataDirectory.appending(path: "index.json") }
 
-  static func load() throws -> Index {
+  public static func load() throws -> Index {
     guard FileManager.default.fileExists(atPath: fileURL.path) else {
       var index = Index()
       try index.scan()
@@ -50,14 +50,14 @@ struct Index: Codable {
 
   // older index files predate manualSets
   private enum CodingKeys: String, CodingKey { case candidates, manualSets }
-  init() {}
-  init(from decoder: Decoder) throws {
+  public init() {}
+  public init(from decoder: Decoder) throws {
     let container = try decoder.container(keyedBy: CodingKeys.self)
     candidates = try container.decode([String: Candidate].self, forKey: .candidates)
     manualSets = try container.decodeIfPresent([String: Date].self, forKey: .manualSets) ?? [:]
   }
 
-  func save() throws {
+  public func save() throws {
     try FileManager.default.createDirectory(at: Self.fileURL.deletingLastPathComponent(), withIntermediateDirectories: true)
     let encoder = JSONEncoder()
     encoder.dateEncodingStrategy = .iso8601
@@ -67,7 +67,7 @@ struct Index: Codable {
 
   // walks the library and generated dirs; new files get measured, missing ones are dropped,
   // existing entries keep their show history
-  mutating func scan(verbose: Bool = false) throws {
+  public mutating func scan(verbose: Bool = false) throws {
     let configuration = try Root.config()
     let fileManager = FileManager.default
     var seen = Set<String>()
@@ -106,7 +106,7 @@ struct Index: Codable {
     for key in candidates.keys where !seen.contains(key) { candidates.removeValue(forKey: key) }
   }
 
-  mutating func add(generated url: URL, module: Module, seed: UInt32, width: Int, height: Int) {
+  public mutating func add(generated url: URL, module: Module, seed: UInt32, width: Int, height: Int) {
     let path = url.standardizedFileURL.path
     var candidate = Candidate(path: path, source: module.name, kind: .generated, width: width, height: height, indexedAt: Date())
     candidate.module = module.name
@@ -115,16 +115,16 @@ struct Index: Codable {
     candidates[path] = candidate
   }
 
-  mutating func markShown(_ path: String) {
+  public mutating func markShown(_ path: String) {
     candidates[path]?.lastShown = Date()
     candidates[path]?.shownCount += 1
   }
 
-  mutating func markManual(_ screen: Screen) {
+  public mutating func markManual(_ screen: Screen) {
     manualSets[screen.uuid] = Date()
   }
 
-  func heldUntil(_ screen: Screen, hold: TimeInterval) -> Date? {
+  public func heldUntil(_ screen: Screen, hold: TimeInterval) -> Date? {
     guard let setAt = manualSets[screen.uuid] else { return nil }
     let until = setAt.addingTimeInterval(hold)
     return until > Date() ? until : nil

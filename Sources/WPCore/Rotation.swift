@@ -1,29 +1,34 @@
 import Foundation
 
-enum Fit {
+public enum Fit {
   // fraction of the image's area that survives a center-crop onto the display
-  static func score(imageAspect: Double, displayAspect: Double) -> Double {
+  public static func score(imageAspect: Double, displayAspect: Double) -> Double {
     min(imageAspect / displayAspect, displayAspect / imageAspect)
   }
 
   // 1.0 when the image has at least the display's pixels on both axes; below that it'll be upscaled
-  static func resolution(_ candidate: Candidate, _ screen: Screen) -> Double {
+  public static func resolution(_ candidate: Candidate, _ screen: Screen) -> Double {
     min(1.0, Double(candidate.width) / Double(screen.pixelSize.w), Double(candidate.height) / Double(screen.pixelSize.h))
   }
 
   // generated images were rendered for one exact display; never crop them onto another
-  static func sizeAllowed(_ candidate: Candidate, _ screen: Screen) -> Bool {
+  public static func sizeAllowed(_ candidate: Candidate, _ screen: Screen) -> Bool {
     candidate.kind != .generated || (candidate.width == screen.pixelSize.w && candidate.height == screen.pixelSize.h)
   }
 }
 
-struct Picker {
-  let configuration: Config
-  let index: Index
+public struct Picker {
+  public let configuration: Config
+  public let index: Index
 
-  struct Entry { let candidate: Candidate; let fit: Double; let resolution: Double }
+  public init(configuration: Config, index: Index) {
+    self.configuration = configuration
+    self.index = index
+  }
 
-  func eligible(for screen: Screen, source: String?) -> [Entry] {
+  public struct Entry { public let candidate: Candidate; public let fit: Double; public let resolution: Double }
+
+  public func eligible(for screen: Screen, source: String?) -> [Entry] {
     index.candidates.values.compactMap { candidate in
       guard configuration.sources.enabled.contains(candidate.source) else { return nil }
       if let source, candidate.source != source { return nil }
@@ -37,7 +42,7 @@ struct Picker {
 
   // two stages: pick a source (weighted by sqrt of its eligible count, so big folders don't drown
   // small ones), then an image within it favoring fit, resolution, and not-recently-shown
-  func pick(for screen: Screen, source: String?, avoiding: Set<String>) -> Entry? {
+  public func pick(for screen: Screen, source: String?, avoiding: Set<String>) -> Entry? {
     let pool = eligible(for: screen, source: source).filter { !avoiding.contains($0.candidate.path) }
     guard !pool.isEmpty else { return nil }
     let bySource = Dictionary(grouping: pool, by: \.candidate.source)

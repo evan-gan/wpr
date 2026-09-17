@@ -1,9 +1,12 @@
 import Foundation
 
-enum Subprocess {
-  struct Result { let status: Int32; let stdout: String; let stderr: String }
+public enum Subprocess {
+  public struct Result {
+    public let status: Int32, stdout: String, stderr: String
+    public init(status: Int32, stdout: String, stderr: String) { self.status = status; self.stdout = stdout; self.stderr = stderr }
+  }
 
-  static func run(executable: String, arguments: [String], cwd: URL? = nil) throws -> Result {
+  public static func run(executable: String, arguments: [String], cwd: URL? = nil) throws -> Result {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: executable)
     p.arguments = arguments

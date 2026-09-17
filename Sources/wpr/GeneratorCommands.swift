@@ -1,5 +1,6 @@
 import AppKit
 import ArgumentParser
+import WPCore
 
 struct ModulesCommand: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "modules", abstract: "list generator modules")

@@ -1,4 +1,5 @@
 import ArgumentParser
+import WPCore
 
 @main
 struct WP: AsyncParsableCommand {
@@ -13,3 +14,5 @@ struct WP: AsyncParsableCommand {
     ]
   )
 }
+
+extension Fill: ExpressibleByArgument {}

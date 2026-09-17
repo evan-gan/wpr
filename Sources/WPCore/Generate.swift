@@ -1,7 +1,7 @@
 import Foundation
 
-enum Generator {
-  static func generate(_ module: Module, width: Int, height: Int, seed: UInt32, params: [String], to out: URL, verbose: Bool, time: Float = 0) async throws {
+public enum Generator {
+  public static func generate(_ module: Module, width: Int, height: Int, seed: UInt32, params: [String], to out: URL, verbose: Bool, time: Float = 0) async throws {
     switch module.host {
     case .metal:
       let source = try String(contentsOf: module.entryURL, encoding: .utf8)

@@ -1,5 +1,6 @@
 import AppKit
 import ArgumentParser
+import WPCore
 
 struct DisplaysCommand: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "displays", abstract: "list connected displays and what's on them")

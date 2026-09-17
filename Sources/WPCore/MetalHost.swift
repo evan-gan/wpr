@@ -9,7 +9,7 @@ struct Uniforms {
   var time: Float
 }
 
-enum MetalHost {
+public enum MetalHost {
   // prepended to every module shader: entry points, uniforms, and a small helper library
   static let header = """
   #include <metal_stdlib>
@@ -110,8 +110,8 @@ enum MetalHost {
 
 // a compiled module at one size: the shader is compiled and the textures allocated once, then
 // frames are cheap — that's what makes `wpr stream` possible
-final class MetalRenderer {
-  let width: Int, height: Int
+public final class MetalRenderer {
+  public let width: Int, height: Int
   private let device: MTLDevice
   private let queue: MTLCommandQueue
   private let mainPipeline: MTLRenderPipelineState
@@ -119,7 +119,7 @@ final class MetalRenderer {
   private let scene: MTLTexture?
   private let output: MTLTexture
 
-  init(source: String, width: Int, height: Int, params: [String] = []) throws {
+  public init(source: String, width: Int, height: Int, params: [String] = []) throws {
     guard let device = MTLCreateSystemDefaultDevice() else { throw WPError("no Metal device") }
     self.device = device
     self.width = width
@@ -165,7 +165,7 @@ final class MetalRenderer {
   }
 
   /// one frame as bgra8 bytes, top row first
-  func frame(seed: UInt32, time: Float) throws -> [UInt8] {
+  public func frame(seed: UInt32, time: Float) throws -> [UInt8] {
     guard let commandBuffer = queue.makeCommandBuffer() else { throw WPError("Metal setup failed") }
     let uniforms = Uniforms(res: SIMD2(Float(width), Float(height)), seed: Float(seed), time: time)
     func pass(_ pipeline: MTLRenderPipelineState, into target: MTLTexture, reading input: MTLTexture?) throws {
@@ -197,7 +197,7 @@ final class MetalRenderer {
     return bytes
   }
 
-  func image(seed: UInt32, time: Float) throws -> CGImage {
+  public func image(seed: UInt32, time: Float) throws -> CGImage {
     var bytes = try frame(seed: seed, time: time)
     let info = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
     guard let context = CGContext(data: &bytes, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
@@ -209,7 +209,7 @@ final class MetalRenderer {
 }
 
 extension MetalHost {
-  static func writePNG(_ image: CGImage, to url: URL) throws {
+  public static func writePNG(_ image: CGImage, to url: URL) throws {
     try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
     guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else {
       throw WPError("can't create \(url.path)")

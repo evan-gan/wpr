@@ -1,13 +1,15 @@
 import CoreGraphics
 import Foundation
-protocol Sink {
+
+public protocol Sink {
   mutating func write(_ bgra: [UInt8], index: Int, renderer: MetalRenderer) throws
   func finish() throws
 }
 
-struct PNGSink: Sink {
-  let directory: URL, width: Int, height: Int
-  func write(_ bgra: [UInt8], index: Int, renderer: MetalRenderer) throws {
+public struct PNGSink: Sink {
+  public let directory: URL, width: Int, height: Int
+  public init(directory: URL, width: Int, height: Int) { self.directory = directory; self.width = width; self.height = height }
+  public func write(_ bgra: [UInt8], index: Int, renderer: MetalRenderer) throws {
     var bytes = bgra
     let info = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
     guard let context = CGContext(data: &bytes, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
@@ -15,12 +17,13 @@ struct PNGSink: Sink {
           let image = context.makeImage() else { throw WPError("couldn't build CGImage") }
     try MetalHost.writePNG(image, to: directory.appendingPathComponent(String(format: "%05d.png", index)))
   }
-  func finish() throws {}
+  public func finish() throws {}
 }
 
-struct RawSink: Sink {
-  let gray: Bool
-  func write(_ bgra: [UInt8], index: Int, renderer: MetalRenderer) throws {
+public struct RawSink: Sink {
+  public let gray: Bool
+  public init(gray: Bool) { self.gray = gray }
+  public func write(_ bgra: [UInt8], index: Int, renderer: MetalRenderer) throws {
     if gray {
       var luma = [UInt8](repeating: 0, count: bgra.count / 4)
       for pixel in 0..<luma.count {
@@ -32,13 +35,13 @@ struct RawSink: Sink {
       FileHandle.standardOutput.write(Data(bgra))
     }
   }
-  func finish() throws {}
+  public func finish() throws {}
 }
 
-final class FFmpegSink: Sink {
+public final class FFmpegSink: Sink {
   let process = Process()
   let input: Pipe
-  init(path: String, width: Int, height: Int, fps: Double) throws {
+  public init(path: String, width: Int, height: Int, fps: Double) throws {
     guard let ffmpeg = ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"].first(where: { FileManager.default.isExecutableFile(atPath: $0) }) else {
       throw WPError("ffmpeg not found (brew install ffmpeg)")
     }
@@ -50,16 +53,16 @@ final class FFmpegSink: Sink {
     process.standardInput = input
     try process.run()
   }
-  func write(_ bgra: [UInt8], index: Int, renderer: MetalRenderer) throws {
+  public func write(_ bgra: [UInt8], index: Int, renderer: MetalRenderer) throws {
     input.fileHandleForWriting.write(Data(bgra))
   }
-  func finish() throws {
+  public func finish() throws {
     try input.fileHandleForWriting.close()
     process.waitUntilExit()
     guard process.terminationStatus == 0 else { throw WPError("ffmpeg exited \(process.terminationStatus)") }
   }
 }
 
-extension FileHandle {
+public extension FileHandle {
   var isTerminal: Bool { isatty(fileDescriptor) != 0 }
 }
