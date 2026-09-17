@@ -9,7 +9,7 @@ generated = "~/Library/Application Support/wpr/generated"
 
 [sources]
 # folders (by name) and generator modules in the rotation. `wp sources` lists what's available.
-enabled = ["neon-contours", "cosmos"]
+enabled = ["tunic", "melange", "wells", "neon-contours"]
 
 [rotation]
 # minimum fraction of an image that must survive center-cropping onto a display

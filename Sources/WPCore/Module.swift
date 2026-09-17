@@ -37,6 +37,7 @@ public struct Module {
   }
 
   public static func discover() throws -> [Module] {
+    Installer.bootstrapIfNeeded()
     var found: [Module] = []
     try walk(Root.modulesDirectory, components: [], depth: 0, into: &found)
     return found.sorted { $0.fullName < $1.fullName }

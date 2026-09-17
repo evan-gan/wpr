@@ -33,12 +33,19 @@ enum WebHost {
     let frame = NSRect(x: 0, y: 0, width: width, height: height)
     let webView = WKWebView(frame: frame, configuration: configuration)
     webView.navigationDelegate = relay
-    // css pixels == device pixels, whatever screen the window lands on. WebKit SPI; if it ever
-    // disappears the size check on the snapshot fails loudly instead of shipping a blurry image
-    let override = NSSelectorFromString("_setOverrideDeviceScaleFactor:")
-    if webView.responds(to: override) {
+    // two WebKit SPI calls. the first makes css pixels equal device pixels whatever screen the
+    // window lands on; if it ever disappears the size check on the snapshot fails loudly. the second
+    // stops WebKit treating the off-screen window as occluded, which would leave the page "hidden":
+    // no animation frames, throttled timers, and a render that takes ten seconds instead of one
+    let scaleOverride = NSSelectorFromString("_setOverrideDeviceScaleFactor:")
+    if webView.responds(to: scaleOverride) {
       typealias Setter = @convention(c) (AnyObject, Selector, CGFloat) -> Void
-      unsafeBitCast(webView.method(for: override), to: Setter.self)(webView, override, 1.0)
+      unsafeBitCast(webView.method(for: scaleOverride), to: Setter.self)(webView, scaleOverride, 1.0)
+    }
+    let occlusion = NSSelectorFromString("_setWindowOcclusionDetectionEnabled:")
+    if webView.responds(to: occlusion) {
+      typealias Setter = @convention(c) (AnyObject, Selector, Bool) -> Void
+      unsafeBitCast(webView.method(for: occlusion), to: Setter.self)(webView, occlusion, false)
     }
 
     // a window to draw in, kept off every screen so nothing flashes
@@ -52,8 +59,8 @@ enum WebHost {
     webView.load(URLRequest(url: URL(string: "wpr://module/\(page)")!))
     let finished = await relay.waitForDone(timeoutMs: module.timeoutMs ?? 20000)
     if let failure = relay.failure { throw WPError("page failed to load: \(failure)") }
-    if !finished { FileHandle.standardError.write(Data("[host] no WP_DONE after \(module.timeoutMs ?? 20000)ms, snapshotting anyway\n".utf8)) }
-    if verbose { FileHandle.standardError.write(Data("[host] page ready in \(Int(Date().timeIntervalSince(started) * 1000))ms\n".utf8)) }
+    if !finished { FileHandle.standardError.write(Data("[host] \(module.name): no WP_DONE after \(module.timeoutMs ?? 20000)ms, snapshotting anyway\n".utf8)) }
+    if verbose { FileHandle.standardError.write(Data("[host] \(module.name): page ready in \(Int(Date().timeIntervalSince(started) * 1000))ms\n".utf8)) }
 
     let snapshot = WKSnapshotConfiguration()
     snapshot.rect = frame

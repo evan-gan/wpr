@@ -60,21 +60,21 @@ struct SetCommand: ParsableCommand {
   }
 }
 
-struct NextCommand: ParsableCommand {
+struct NextCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(commandName: "next", abstract: "pick a new wallpaper for each display, aspect-aware")
 
   @Option(name: .shortAndLong, help: "display index, name substring, or 'all'") var display: String?
   @Option(name: .shortAndLong, help: "restrict to one source (folder or module)") var source: String?
   @Flag(name: .long, help: "print the pick without setting it") var dryRun = false
 
-  func run() throws {
+  func run() async throws {
     let configuration = try Root.config()
     var index = try Index.load()
     let picker = Picker(configuration: configuration, index: index)
     var used = Set<String>()
     for screen in try Screen.select(display) {
       guard let entry = picker.pick(for: screen, source: source, avoiding: used) else {
-        print("\(screen.index) \(screen.name): nothing eligible (enabled: \(configuration.sources.enabled.joined(separator: ", ")))")
+        try await generateFresh(for: screen, configuration: configuration, index: &index)
         continue
       }
       let candidate = entry.candidate
@@ -88,6 +88,29 @@ struct NextCommand: ParsableCommand {
       }
     }
     if !dryRun { try index.save() }
+  }
+
+  // nothing in the pool fits this display: render one from an enabled module right now, so a
+  // fresh install (or a new display) gets a wallpaper on the first `next` instead of a shrug
+  private func generateFresh(for screen: Screen, configuration: Config, index: inout Index) async throws {
+    let enabled = try Module.discover().filter { configuration.sources.enabled.contains($0.name) && (source == nil || $0.name == source) }
+    guard let module = enabled.randomElement() else {
+      print("\(screen.index) \(screen.name): nothing eligible and no enabled modules (enabled: \(configuration.sources.enabled.joined(separator: ", ")))")
+      return
+    }
+    let seed = UInt32.random(in: 0..<16_000_000)
+    let (width, height) = screen.pixelSize
+    if dryRun {
+      print("\(screen.index) \(screen.name): nothing in the pool; would generate \(module.name) seed \(seed)  (dry run)")
+      return
+    }
+    let url = configuration.generatedURL.appendingPathComponent("\(module.name)-\(seed)-\(width)x\(height).png")
+    try await Generator.generate(module, width: width, height: height, seed: seed, params: [], to: url, verbose: false)
+    index.add(generated: url, module: module, seed: seed, width: width, height: height)
+    try NSWorkspace.shared.setDesktopImageURL(url, for: screen.nsScreen, options: Fill.crop.options)
+    index.markShown(url.standardizedFileURL.path)
+    index.markManual(screen)
+    print("\(screen.index) \(screen.name) <- \(module.name)/\(url.lastPathComponent)  (generated now)")
   }
 }
 

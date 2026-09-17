@@ -72,58 +72,55 @@ public struct Config: Decodable {
 }
 
 public enum Root {
-  private static var cached: URL?
-
-  public static func url() throws -> URL {
-    if let cached { return cached }
-    let found = try resolve()
-    cached = found
-    return found
-  }
-
   public static var configURL: URL { URL.homeDirectory.appending(path: ".config/wpr/config.toml") }
   /// the index, thumbnails, and generated wallpapers
   public static var dataDirectory: URL { URL.applicationSupportDirectory.appending(path: "wpr") }
   /// installed modules, as <host>/<owner>/<name> or local/<name>
   public static var modulesDirectory: URL { dataDirectory.appending(path: "modules") }
 
-  // first run copies config.default.toml into place so there's something to edit
+  // written to configURL on first run so there's something to edit
+  public static let defaultConfig = """
+# where your wallpaper images live. each subfolder becomes a source you can enable/disable;
+# loose files at the top level show up as the source "misc".
+library = "~/Pictures/Wallpapers"
+
+# where generated wallpapers are written
+generated = "~/Library/Application Support/wpr/generated"
+
+[sources]
+# folders (by name) and generator modules in the rotation. `wp sources` lists what's available.
+enabled = ["tunic", "melange", "wells", "neon-contours"]
+
+[rotation]
+# minimum fraction of an image that must survive center-cropping onto a display
+min_fit = 0.6
+# minimum image size relative to the display (0.3 = allow up to ~3x upscale)
+min_res = 0.3
+# prefer dark wallpapers in dark mode and bright ones in light mode
+match_appearance = true
+# how often `wp timer` runs `wp tick`
+interval = "30m"
+# after you set a wallpaper yourself (set / gen / next), the timer leaves that display alone this long
+hold_manual = "2h"
+
+[pool]
+# unseen generated wallpapers to keep on hand, per module per display size (topped up on AC power only)
+per_module = 4
+# total generated files kept per module per display size before the oldest get trashed
+keep = 12
+"""
+
   public static func config() throws -> Config {
     let file = configURL
     if !FileManager.default.fileExists(atPath: file.path) {
       try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try FileManager.default.copyItem(at: try url().appendingPathComponent("config.default.toml"), to: file)
-      FileHandle.standardError.write("wpr: created \(file.path) — set `library` to your wallpapers folder\n".data(using: .utf8)!)
+      try defaultConfig.write(to: file, atomically: true, encoding: .utf8)
+      FileHandle.standardError.write(Data("wpr: created \(file.path) — set `library` to your wallpapers folder\n".utf8))
     }
     let text = try String(contentsOf: file, encoding: .utf8)
     return try TOMLDecoder().decode(Config.self, from: text)
   }
 
-  private static func isRoot(_ directory: URL) -> Bool {
-    let fileManager = FileManager.default
-    return fileManager.fileExists(atPath: directory.appendingPathComponent("Package.swift").path)
-      && fileManager.fileExists(atPath: directory.appendingPathComponent("modules").path)
-  }
-
-  private static func resolve() throws -> URL {
-    let fileManager = FileManager.default
-    if let override = ProcessInfo.processInfo.environment["WP_ROOT"] {
-      return URL(fileURLWithPath: override)
-    }
-    var directory = URL(fileURLWithPath: fileManager.currentDirectoryPath)
-    while true {
-      if isRoot(directory) { return directory }
-      let parent = directory.deletingLastPathComponent()
-      if parent.path == directory.path { break }
-      directory = parent
-    }
-    let pointer = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".config/wp/root")
-    if let text = try? String(contentsOf: pointer, encoding: .utf8) {
-      let url = URL(fileURLWithPath: text.trimmingCharacters(in: .whitespacesAndNewlines))
-      if isRoot(url) { return url }
-    }
-    throw WPError("can't find the wp repo root. set WP_ROOT, run from inside the repo, or `make install`")
-  }
 }
 
 // "30m", "2h", "900s", or bare seconds

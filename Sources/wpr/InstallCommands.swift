@@ -1,25 +1,39 @@
 import ArgumentParser
-import Foundation
 import WPCore
 
 struct InstallCommand: ParsableCommand {
-  static let configuration = CommandConfiguration(commandName: "install", abstract: "install a module from a local folder")
+  static let configuration = CommandConfiguration(commandName: "install", abstract: "install a module from a git repository or a local folder")
 
-  @Argument(help: "a path (starts with ., /, or ~) to a folder containing module.toml") var source: String
+  @Argument(help: "owner/name (github), host/owner/name, a git url, or a path starting with ./ or /") var source: String
 
   func run() throws {
-    guard source.hasPrefix(".") || source.hasPrefix("/") || source.hasPrefix("~") else {
-      throw ValidationError("only local paths for now; write it as ./name, /abs/path, or ~/path")
+    let source = try ModuleSource.parse(source)
+    let module = try Installer.install(source)
+    print("installed \(module.fullName) -> \(module.directory.path)")
+  }
+}
+
+struct UninstallCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "uninstall", abstract: "remove an installed module")
+
+  @Argument(help: "module name (see `wpr modules`)") var module: String
+
+  func run() throws {
+    let module = try Module.named(module)
+    try Installer.uninstall(module)
+    print("removed \(module.fullName)")
+  }
+}
+
+struct UpdateCommand: ParsableCommand {
+  static let configuration = CommandConfiguration(commandName: "update", abstract: "git pull every cloned module, or just the ones named")
+
+  @Argument(help: "module names; all cloned modules if omitted") var modules: [String] = []
+
+  func run() throws {
+    let targets = try modules.isEmpty ? Module.discover() : modules.map(Module.named)
+    for module in targets {
+      if let outcome = try Installer.update(module) { print("\(module.fullName.pad(28)) \(outcome)") }
     }
-    let folder = URL(filePath: (source as NSString).expandingTildeInPath).standardizedFileURL
-    guard FileManager.default.fileExists(atPath: folder.appending(path: Module.manifestFile).path) else {
-      throw ValidationError("no \(Module.manifestFile) in \(folder.path)")
-    }
-    let name = Module.name(fromRepository: folder.lastPathComponent)
-    let link = Root.modulesDirectory.appending(path: "local/\(name)")
-    guard !FileManager.default.fileExists(atPath: link.path) else { throw WPError("local/\(name) is already installed") }
-    try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try FileManager.default.createSymbolicLink(at: link, withDestinationURL: folder)
-    print("installed local/\(name) -> \(folder.path)")
   }
 }
