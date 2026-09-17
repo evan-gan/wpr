@@ -1,4 +1,0 @@
-name = "cosmos"
-description = "a procedural planet, star, galaxy or black hole over a nebula, via Eluvade/cosmos"
-host = "web"
-entry = "index.html"

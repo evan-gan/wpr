@@ -1,4 +1,0 @@
-name = "spectra"
-description = "a light leak through glass, photographed on film: one soft shape split by dispersion"
-host = "metal"
-entry = "shader.metal"

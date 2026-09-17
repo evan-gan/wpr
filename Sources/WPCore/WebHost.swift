@@ -2,7 +2,7 @@ import AppKit
 import UniformTypeIdentifiers
 import WebKit
 
-// renders a web module in an offscreen WKWebView. the checkout is served over the wpr:// scheme
+// renders a web module in an offscreen WKWebView. the module folder is served over the wpr:// scheme
 // (ES modules and importmaps don't work over file://), the page gets window.WP before any of its
 // script runs, and we snapshot once it sets window.WP_DONE
 enum WebHost {
@@ -11,10 +11,9 @@ enum WebHost {
     _ = NSApplication.shared
     NSApp.setActivationPolicy(.prohibited)
 
-    let checkout = try Root.url().standardizedFileURL
-    let entry = module.entryURL.standardizedFileURL
-    guard entry.path.hasPrefix(checkout.path + "/") else { throw WPError("web module must live inside the checkout: \(entry.path)") }
-    let page = String(entry.path.dropFirst(checkout.path.count + 1))
+    // a module is self-contained: its own folder is everything the page can load
+    let root = module.directory.resolvingSymlinksInPath()
+    let page = module.manifest.entry
 
     var parameters: [String: String] = [:]
     for parameter in params {
@@ -25,7 +24,7 @@ enum WebHost {
 
     let relay = Relay(verbose: verbose)
     let configuration = WKWebViewConfiguration()
-    configuration.setURLSchemeHandler(CheckoutScheme(root: checkout), forURLScheme: "wpr")
+    configuration.setURLSchemeHandler(ModuleScheme(root: root), forURLScheme: "wpr")
     configuration.userContentController.add(relay, name: "wpr")
     configuration.userContentController.addUserScript(WKUserScript(
       source: "window.WP = \(String(decoding: wp, as: UTF8.self));\n" + pageScript,
@@ -50,7 +49,7 @@ enum WebHost {
     defer { window.orderOut(nil) }
 
     let started = Date()
-    webView.load(URLRequest(url: URL(string: "wpr://checkout/\(page)")!))
+    webView.load(URLRequest(url: URL(string: "wpr://module/\(page)")!))
     let finished = await relay.waitForDone(timeoutMs: module.timeoutMs ?? 20000)
     if let failure = relay.failure { throw WPError("page failed to load: \(failure)") }
     if !finished { FileHandle.standardError.write(Data("[host] no WP_DONE after \(module.timeoutMs ?? 20000)ms, snapshotting anyway\n".utf8)) }
@@ -110,8 +109,8 @@ enum WebHost {
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { failure = "web content process crashed"; finish(done: false) }
   }
 
-  // wpr://checkout/<path> serves <checkout>/<path>
-  final class CheckoutScheme: NSObject, WKURLSchemeHandler {
+  // wpr://module/<path> serves <module folder>/<path>
+  final class ModuleScheme: NSObject, WKURLSchemeHandler {
     let root: URL
     init(root: URL) { self.root = root }
 

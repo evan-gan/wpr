@@ -1,4 +1,0 @@
-name = "monterey"
-description = "a valley of layered hills in saturated purple colors, after mrange's Monterey wannabe"
-host = "metal"
-entry = "shader.metal"

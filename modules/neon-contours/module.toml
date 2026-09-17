@@ -1,4 +1,0 @@
-name = "neon-contours"
-description = "glowing topographic isolines over a dark plane, seen from a low camera"
-host = "metal"
-entry = "shader.metal"

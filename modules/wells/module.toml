@@ -1,4 +1,0 @@
-name = "wells"
-description = "gravity wells as a contoured potential surface, after mjmurdoc"
-host = "metal"
-entry = "shader.metal"

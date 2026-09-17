@@ -1,5 +1,0 @@
-name = "monolith"
-description = "procedural terrain as a vintage USGS topo sheet with a sci-fi HUD, via kaolti/monolith-terrain"
-host = "web"
-entry = "index.html"
-timeout_ms = 60000

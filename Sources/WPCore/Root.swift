@@ -84,7 +84,8 @@ public enum Root {
   public static var configURL: URL { URL.homeDirectory.appending(path: ".config/wpr/config.toml") }
   /// the index, thumbnails, and generated wallpapers
   public static var dataDirectory: URL { URL.applicationSupportDirectory.appending(path: "wpr") }
-  public static func modulesDir() throws -> URL { try url().appendingPathComponent("modules") }
+  /// installed modules, as <host>/<owner>/<name> or local/<name>
+  public static var modulesDirectory: URL { dataDirectory.appending(path: "modules") }
 
   // first run copies config.default.toml into place so there's something to edit
   public static func config() throws -> Config {

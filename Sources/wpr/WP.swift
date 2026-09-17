@@ -9,7 +9,7 @@ struct WP: AsyncParsableCommand {
     groupedSubcommands: [
       CommandGroup(name: "wallpapers", subcommands: [NextCommand.self, SetCommand.self, LsCommand.self, DisplaysCommand.self, RmCommand.self]),
       CommandGroup(name: "sources", subcommands: [SourcesCommand.self, EnableCommand.self, DisableCommand.self, ScanCommand.self]),
-      CommandGroup(name: "generators", subcommands: [GenCommand.self, StreamCommand.self, ModulesCommand.self]),
+      CommandGroup(name: "generators", subcommands: [GenCommand.self, StreamCommand.self, ModulesCommand.self, InstallCommand.self]),
       CommandGroup(name: "automation", subcommands: [TickCommand.self, TimerCommand.self]),
     ]
   )

@@ -7,7 +7,7 @@ struct ModulesCommand: ParsableCommand {
 
   func run() throws {
     for module in try Module.discover() {
-      print("\(module.name)  [\(module.host.rawValue)]  \(module.description)")
+      print("\(module.fullName.pad(28)) \(module.host.rawValue.pad(6)) \(module.description)")
     }
   }
 }

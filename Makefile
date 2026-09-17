@@ -1,18 +1,10 @@
 ROOT := $(shell pwd)
 BIN  := $(HOME)/.local/bin/wpr
 
-.PHONY: build release install dev vendor
+.PHONY: build release install dev
 
 build:
 	swift build
-
-vendor:
-	git submodule update --init
-	bun install --cwd vendor/cosmos --no-save
-	bun run --cwd vendor/cosmos build
-	bun install --cwd vendor/monolith-terrain --no-save
-	# bun writes a lockfile even with --no-save; keep the submodules clean
-	rm -f vendor/*/bun.lock
 
 release:
 	swift build -c release

@@ -1,4 +1,0 @@
-name = "wireframes"
-description = "a stylized barycentric wireframe solid on a flat palette, via mattdesl/webgl-wireframes"
-host = "web"
-entry = "index.html"

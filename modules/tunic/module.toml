@@ -1,4 +1,0 @@
-name = "tunic"
-description = "teal aurora filaments and sparkle motes, after the TUNIC title screen"
-host = "metal"
-entry = "shader.metal"
