@@ -8,7 +8,6 @@ build:
 
 vendor:
 	git submodule update --init
-	bun install --cwd hosts/web
 	bun install --cwd vendor/cosmos --no-save
 	bun run --cwd vendor/cosmos build
 	bun install --cwd vendor/monolith-terrain --no-save

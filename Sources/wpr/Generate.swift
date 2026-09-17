@@ -2,15 +2,15 @@ import AppKit
 import ArgumentParser
 
 enum Generator {
-  static func generate(_ m: Module, width: Int, height: Int, seed: UInt32, params: [String], to out: URL, verbose: Bool, time: Float = 0) throws {
+  static func generate(_ m: Module, width: Int, height: Int, seed: UInt32, params: [String], to out: URL, verbose: Bool, time: Float = 0) async throws {
     switch m.host {
     case .metal:
       let source = try String(contentsOf: m.entryURL, encoding: .utf8)
       let img = try MetalHost.render(source: source, width: width, height: height, seed: seed, params: params, time: time)
       try MetalHost.writePNG(img, to: out)
     case .web:
-      try FileManager.default.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
-      try WebHost.render(module: m, width: width, height: height, seed: seed, params: params, to: out, verbose: verbose)
+      let image = try await WebHost.render(module: m, width: width, height: height, seed: seed, params: params, verbose: verbose)
+      try MetalHost.writePNG(image, to: out)
     case .exec:
       try FileManager.default.createDirectory(at: out.deletingLastPathComponent(), withIntermediateDirectories: true)
       var args = ["--width", "\(width)", "--height", "\(height)", "--seed", "\(seed)", "--out", out.path]
@@ -35,7 +35,7 @@ struct ModulesCommand: ParsableCommand {
   }
 }
 
-struct GenCommand: ParsableCommand {
+struct GenCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(commandName: "gen", abstract: "generate a wallpaper from a module and set it")
 
   @Argument(help: "module name (see `wp modules`)") var module: String
@@ -48,7 +48,7 @@ struct GenCommand: ParsableCommand {
   @Flag(name: .long, help: "write the file but don't set it as wallpaper") var noSet = false
   @Flag(name: .shortAndLong, help: "show host/module logs") var verbose = false
 
-  func run() throws {
+  func run() async throws {
     let m = try Module.named(module)
     let cfg = try Root.config()
     let seed = seed ?? UInt32.random(in: 0..<16_000_000)
@@ -70,7 +70,7 @@ struct GenCommand: ParsableCommand {
       let start = Date()
       let url = out.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
         ?? cfg.generatedURL.appendingPathComponent("\(m.name)-\(seed)-\(t.w)x\(t.h).png")
-      try Generator.generate(m, width: t.w, height: t.h, seed: seed, params: set, to: url, verbose: verbose, time: time)
+      try await Generator.generate(m, width: t.w, height: t.h, seed: seed, params: set, to: url, verbose: verbose, time: time)
       let ms = Int(Date().timeIntervalSince(start) * 1000)
       print("\(url.path)  seed=\(seed)  \(ms)ms")
       index?.add(generated: url, module: m, seed: seed, width: t.w, height: t.h)

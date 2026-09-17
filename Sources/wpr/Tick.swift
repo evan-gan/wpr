@@ -1,7 +1,7 @@
 import AppKit
 import ArgumentParser
 
-struct TickCommand: ParsableCommand {
+struct TickCommand: AsyncParsableCommand {
   static let configuration = CommandConfiguration(
     commandName: "tick",
     abstract: "one rotation step: top up the generated pool (on AC power only), prune, then set new wallpapers"
@@ -10,7 +10,7 @@ struct TickCommand: ParsableCommand {
   @Flag(name: .long, help: "generate even on battery") var forceGenerate = false
   @Flag(name: .long, help: "don't change wallpapers, just maintain the pool") var noRotate = false
 
-  func run() throws {
+  func run() async throws {
     let cfg = try Root.config()
     var index = try Index.load()
     let screens = Screen.all
@@ -29,7 +29,7 @@ struct TickCommand: ParsableCommand {
             let url = cfg.generatedURL.appendingPathComponent("\(m.name)-\(seed)-\(w)x\(h).png")
             let start = Date()
             do {
-              try Generator.generate(m, width: w, height: h, seed: seed, params: [], to: url, verbose: false)
+              try await Generator.generate(m, width: w, height: h, seed: seed, params: [], to: url, verbose: false)
               index.add(generated: url, module: m, seed: seed, width: w, height: h)
               log("generated \(url.lastPathComponent) (\(Int(Date().timeIntervalSince(start) * 1000))ms)")
             } catch {
