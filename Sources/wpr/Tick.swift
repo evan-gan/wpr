@@ -11,44 +11,44 @@ struct TickCommand: AsyncParsableCommand {
   @Flag(name: .long, help: "don't change wallpapers, just maintain the pool") var noRotate = false
 
   func run() async throws {
-    let cfg = try Root.config()
+    let configuration = try Root.config()
     var index = try Index.load()
     let screens = Screen.all
     let stamp = ISO8601DateFormatter().string(from: Date())
-    func log(_ s: String) { print("\(stamp) \(s)") }
+    func log(_ line: String) { print("\(stamp) \(line)") }
 
     if Power.isOnAC() || forceGenerate {
-      let modules = try Module.discover().filter { cfg.sources.enabled.contains($0.name) }
+      let modules = try Module.discover().filter { configuration.sources.enabled.contains($0.name) }
       let onScreen = Set(screens.compactMap { $0.currentWallpaper?.standardizedFileURL.path })
-      for m in modules {
-        for s in screens {
-          let (w, h) = s.pixelSize
-          let existing = index.candidates.values.filter { $0.module == m.name && $0.width == w && $0.height == h }
-          if existing.filter({ $0.shownCount == 0 }).count < cfg.pool.perModule {
+      for module in modules {
+        for screen in screens {
+          let (width, height) = screen.pixelSize
+          let existing = index.candidates.values.filter { $0.module == module.name && $0.width == width && $0.height == height }
+          if existing.filter({ $0.shownCount == 0 }).count < configuration.pool.perModule {
             let seed = UInt32.random(in: 0..<16_000_000)
-            let url = cfg.generatedURL.appendingPathComponent("\(m.name)-\(seed)-\(w)x\(h).png")
+            let url = configuration.generatedURL.appendingPathComponent("\(module.name)-\(seed)-\(width)x\(height).png")
             let start = Date()
             do {
-              try await Generator.generate(m, width: w, height: h, seed: seed, params: [], to: url, verbose: false)
-              index.add(generated: url, module: m, seed: seed, width: w, height: h)
+              try await Generator.generate(module, width: width, height: height, seed: seed, params: [], to: url, verbose: false)
+              index.add(generated: url, module: module, seed: seed, width: width, height: height)
               log("generated \(url.lastPathComponent) (\(Int(Date().timeIntervalSince(start) * 1000))ms)")
             } catch {
-              log("FAILED \(m.name) \(w)x\(h): \(error)")
+              log("FAILED \(module.name) \(width)x\(height): \(error)")
             }
           }
 
           let oldestFirst = index.candidates.values
-            .filter { $0.module == m.name && $0.width == w && $0.height == h }
+            .filter { $0.module == module.name && $0.width == width && $0.height == height }
             .sorted { $0.indexedAt < $1.indexedAt }
-          var excess = oldestFirst.count - cfg.pool.keep
-          for c in oldestFirst where excess > 0 && !onScreen.contains(c.path) {
+          var excess = oldestFirst.count - configuration.pool.keep
+          for candidate in oldestFirst where excess > 0 && !onScreen.contains(candidate.path) {
             do {
-              try FileManager.default.trashItem(at: c.url, resultingItemURL: nil)
-              index.candidates.removeValue(forKey: c.path)
+              try FileManager.default.trashItem(at: candidate.url, resultingItemURL: nil)
+              index.candidates.removeValue(forKey: candidate.path)
               excess -= 1
-              log("trashed \(c.name)")
+              log("trashed \(candidate.name)")
             } catch {
-              log("couldn't trash \(c.name): \(error.localizedDescription)")
+              log("couldn't trash \(candidate.name): \(error.localizedDescription)")
             }
           }
         }
@@ -58,23 +58,23 @@ struct TickCommand: AsyncParsableCommand {
     }
 
     if !noRotate {
-      let picker = Picker(cfg: cfg, index: index)
+      let picker = Picker(configuration: configuration, index: index)
       var used = Set<String>()
       let clock = DateFormatter()
       clock.dateFormat = "HH:mm"
-      for s in screens {
-        if let until = index.heldUntil(s, hold: cfg.rotation.holdManualSeconds) {
-          log("\(s.index) \(s.name): set by hand, holding until \(clock.string(from: until))")
+      for screen in screens {
+        if let until = index.heldUntil(screen, hold: configuration.rotation.holdManualSeconds) {
+          log("\(screen.index) \(screen.name): set by hand, holding until \(clock.string(from: until))")
           continue
         }
-        guard let e = picker.pick(for: s, source: nil, avoiding: used) else {
-          log("\(s.index) \(s.name): nothing eligible")
+        guard let entry = picker.pick(for: screen, source: nil, avoiding: used) else {
+          log("\(screen.index) \(screen.name): nothing eligible")
           continue
         }
-        used.insert(e.c.path)
-        try NSWorkspace.shared.setDesktopImageURL(e.c.url, for: s.nsScreen, options: Fill.crop.options)
-        index.markShown(e.c.path)
-        log("\(s.index) \(s.name) <- \(e.c.source)/\(e.c.name)")
+        used.insert(entry.candidate.path)
+        try NSWorkspace.shared.setDesktopImageURL(entry.candidate.url, for: screen.nsScreen, options: Fill.crop.options)
+        index.markShown(entry.candidate.path)
+        log("\(screen.index) \(screen.name) <- \(entry.candidate.source)/\(entry.candidate.name)")
       }
     }
     try index.save()

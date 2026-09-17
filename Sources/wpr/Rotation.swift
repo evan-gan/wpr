@@ -8,62 +8,62 @@ enum Fit {
   }
 
   // 1.0 when the image has at least the display's pixels on both axes; below that it'll be upscaled
-  static func resolution(_ c: Candidate, _ s: Screen) -> Double {
-    min(1.0, Double(c.width) / Double(s.pixelSize.w), Double(c.height) / Double(s.pixelSize.h))
+  static func resolution(_ candidate: Candidate, _ screen: Screen) -> Double {
+    min(1.0, Double(candidate.width) / Double(screen.pixelSize.w), Double(candidate.height) / Double(screen.pixelSize.h))
   }
 
   // generated images were rendered for one exact display; never crop them onto another
-  static func sizeAllowed(_ c: Candidate, _ s: Screen) -> Bool {
-    c.kind != .generated || (c.width == s.pixelSize.w && c.height == s.pixelSize.h)
+  static func sizeAllowed(_ candidate: Candidate, _ screen: Screen) -> Bool {
+    candidate.kind != .generated || (candidate.width == screen.pixelSize.w && candidate.height == screen.pixelSize.h)
   }
 }
 
 struct Picker {
-  let cfg: Config
+  let configuration: Config
   let index: Index
 
-  struct Entry { let c: Candidate; let fit: Double; let res: Double }
+  struct Entry { let candidate: Candidate; let fit: Double; let resolution: Double }
 
-  func eligible(for s: Screen, source: String?) -> [Entry] {
-    index.candidates.values.compactMap { c in
-      guard cfg.sources.enabled.contains(c.source) else { return nil }
-      if let source, c.source != source { return nil }
-      guard Fit.sizeAllowed(c, s) else { return nil }
-      let fit = Fit.score(imageAspect: c.aspect, displayAspect: s.aspect)
-      let res = Fit.resolution(c, s)
-      guard fit >= cfg.rotation.minFit, res >= cfg.rotation.minRes else { return nil }
-      return Entry(c: c, fit: fit, res: res)
+  func eligible(for screen: Screen, source: String?) -> [Entry] {
+    index.candidates.values.compactMap { candidate in
+      guard configuration.sources.enabled.contains(candidate.source) else { return nil }
+      if let source, candidate.source != source { return nil }
+      guard Fit.sizeAllowed(candidate, screen) else { return nil }
+      let fit = Fit.score(imageAspect: candidate.aspect, displayAspect: screen.aspect)
+      let resolution = Fit.resolution(candidate, screen)
+      guard fit >= configuration.rotation.minFit, resolution >= configuration.rotation.minRes else { return nil }
+      return Entry(candidate: candidate, fit: fit, resolution: resolution)
     }
   }
 
   // two stages: pick a source (weighted by sqrt of its eligible count, so big folders don't drown
   // small ones), then an image within it favoring fit, resolution, and not-recently-shown
-  func pick(for s: Screen, source: String?, avoiding: Set<String>) -> Entry? {
-    let pool = eligible(for: s, source: source).filter { !avoiding.contains($0.c.path) }
+  func pick(for screen: Screen, source: String?, avoiding: Set<String>) -> Entry? {
+    let pool = eligible(for: screen, source: source).filter { !avoiding.contains($0.candidate.path) }
     guard !pool.isEmpty else { return nil }
-    let bySource = Dictionary(grouping: pool, by: \.c.source)
+    let bySource = Dictionary(grouping: pool, by: \.candidate.source)
     let sources = Array(bySource.keys)
     guard let chosen = weighted(sources, sources.map { Double(bySource[$0]!.count).squareRoot() }) else { return nil }
     let group = bySource[chosen]!
     let now = Date()
-    let dark: Bool? = cfg.rotation.matchAppearance ? Appearance.isDark : nil
-    let weights = group.map { e -> Double in
-      let recency = e.c.lastShown.map { min(1.0, now.timeIntervalSince($0) / 86400) } ?? 1.0
-      var w = e.fit * (0.5 + 0.5 * e.res) * (0.15 + 0.85 * recency)
-      if let dark, let lum = e.c.palette?.luminance {
-        w *= 0.05 + 0.95 * Appearance.preference(luminance: lum, dark: dark)
+    let dark: Bool? = configuration.rotation.matchAppearance ? Appearance.isDark : nil
+    let weights = group.map { entry -> Double in
+      let recency = entry.candidate.lastShown.map { min(1.0, now.timeIntervalSince($0) / 86400) } ?? 1.0
+      var weight = entry.fit * (0.5 + 0.5 * entry.resolution) * (0.15 + 0.85 * recency)
+      if let dark, let luminance = entry.candidate.palette?.luminance {
+        weight *= 0.05 + 0.95 * Appearance.preference(luminance: luminance, dark: dark)
       }
-      return w
+      return weight
     }
     return weighted(group, weights)
   }
 
   private func weighted<T>(_ items: [T], _ weights: [Double]) -> T? {
     guard !items.isEmpty else { return nil }
-    var r = Double.random(in: 0..<weights.reduce(0, +))
-    for (item, w) in zip(items, weights) {
-      r -= w
-      if r <= 0 { return item }
+    var remaining = Double.random(in: 0..<weights.reduce(0, +))
+    for (item, weight) in zip(items, weights) {
+      remaining -= weight
+      if remaining <= 0 { return item }
     }
     return items.last
   }
@@ -77,22 +77,23 @@ struct NextCommand: ParsableCommand {
   @Flag(name: .long, help: "print the pick without setting it") var dryRun = false
 
   func run() throws {
-    let cfg = try Root.config()
+    let configuration = try Root.config()
     var index = try Index.load()
-    let picker = Picker(cfg: cfg, index: index)
+    let picker = Picker(configuration: configuration, index: index)
     var used = Set<String>()
-    for s in try Screen.select(display) {
-      guard let e = picker.pick(for: s, source: source, avoiding: used) else {
-        print("\(s.index) \(s.name): nothing eligible (enabled: \(cfg.sources.enabled.joined(separator: ", ")))")
+    for screen in try Screen.select(display) {
+      guard let entry = picker.pick(for: screen, source: source, avoiding: used) else {
+        print("\(screen.index) \(screen.name): nothing eligible (enabled: \(configuration.sources.enabled.joined(separator: ", ")))")
         continue
       }
-      used.insert(e.c.path)
-      let lum = e.c.palette.map { String(format: " lum %.2f", $0.luminance) } ?? ""
-      print("\(s.index) \(s.name) <- \(e.c.source)/\(e.c.name)  fit \(String(format: "%.2f", e.fit)) res \(String(format: "%.2f", e.res))\(lum)\(dryRun ? "  (dry run)" : "")")
+      let candidate = entry.candidate
+      used.insert(candidate.path)
+      let luminance = candidate.palette.map { String(format: " lum %.2f", $0.luminance) } ?? ""
+      print("\(screen.index) \(screen.name) <- \(candidate.source)/\(candidate.name)  fit \(String(format: "%.2f", entry.fit)) res \(String(format: "%.2f", entry.resolution))\(luminance)\(dryRun ? "  (dry run)" : "")")
       if !dryRun {
-        try NSWorkspace.shared.setDesktopImageURL(e.c.url, for: s.nsScreen, options: Fill.crop.options)
-        index.markShown(e.c.path)
-        index.markManual(s)
+        try NSWorkspace.shared.setDesktopImageURL(candidate.url, for: screen.nsScreen, options: Fill.crop.options)
+        index.markShown(candidate.path)
+        index.markManual(screen)
       }
     }
     if !dryRun { try index.save() }
@@ -107,34 +108,34 @@ struct LsCommand: ParsableCommand {
   @Flag(name: .long, help: "include disabled sources") var all = false
 
   func run() throws {
-    let cfg = try Root.config()
+    let configuration = try Root.config()
     let index = try Index.load()
-    var rows = index.candidates.values.filter { c in
-      (all || cfg.sources.enabled.contains(c.source)) && (source == nil || c.source == source)
+    var rows = index.candidates.values.filter { candidate in
+      (all || configuration.sources.enabled.contains(candidate.source)) && (source == nil || candidate.source == source)
     }
     if let fit, let screen = try Screen.select(fit).first {
       rows.sort {
         Fit.score(imageAspect: $0.aspect, displayAspect: screen.aspect) > Fit.score(imageAspect: $1.aspect, displayAspect: screen.aspect)
       }
       print("   fit   res   lum   size         source            name")
-      for c in rows {
-        let f = Fit.score(imageAspect: c.aspect, displayAspect: screen.aspect)
-        let r = Fit.resolution(c, screen)
-        let mark = (f < cfg.rotation.minFit || r < cfg.rotation.minRes || !Fit.sizeAllowed(c, screen)) ? "x" : " "
-        print("\(mark) \(String(format: "%.2f  %.2f  %@", f, r, lumText(c)))  \("\(c.width)x\(c.height)".pad(11))  \(c.source.pad(16))  \(c.name)")
+      for candidate in rows {
+        let fitScore = Fit.score(imageAspect: candidate.aspect, displayAspect: screen.aspect)
+        let resolution = Fit.resolution(candidate, screen)
+        let eligible = fitScore >= configuration.rotation.minFit && resolution >= configuration.rotation.minRes && Fit.sizeAllowed(candidate, screen)
+        print("\(eligible ? " " : "x") \(String(format: "%.2f  %.2f  %@", fitScore, resolution, luminanceText(candidate)))  \("\(candidate.width)x\(candidate.height)".pad(11))  \(candidate.source.pad(16))  \(candidate.name)")
       }
     } else {
       rows.sort { ($0.source, $0.name) < ($1.source, $1.name) }
       print("lum   size         source            name")
-      for c in rows {
-        print("\(lumText(c))  \("\(c.width)x\(c.height)".pad(11))  \(c.source.pad(16))  \(c.name)")
+      for candidate in rows {
+        print("\(luminanceText(candidate))  \("\(candidate.width)x\(candidate.height)".pad(11))  \(candidate.source.pad(16))  \(candidate.name)")
       }
     }
     print("\(rows.count) candidates")
   }
 
-  private func lumText(_ c: Candidate) -> String {
-    c.palette.map { String(format: "%.2f", $0.luminance) } ?? " -- "
+  private func luminanceText(_ candidate: Candidate) -> String {
+    candidate.palette.map { String(format: "%.2f", $0.luminance) } ?? " -- "
   }
 }
 
@@ -148,7 +149,7 @@ struct ScanCommand: ParsableCommand {
     try index.scan(verbose: verbose)
     try index.save()
     let counts = Dictionary(grouping: index.candidates.values, by: \.source).mapValues(\.count)
-    for (s, n) in counts.sorted(by: { $0.key < $1.key }) { print("\(s.pad(18)) \(n)") }
+    for (source, count) in counts.sorted(by: { $0.key < $1.key }) { print("\(source.pad(18)) \(count)") }
     print("\(index.candidates.count) candidates -> \(Index.fileURL.path)")
   }
 }

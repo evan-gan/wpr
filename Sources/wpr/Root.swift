@@ -33,13 +33,13 @@ struct Config: Decodable {
     private enum K: String, CodingKey {
       case minFit = "min_fit", minRes = "min_res", matchAppearance = "match_appearance", interval, holdManual = "hold_manual"
     }
-    init(from d: Decoder) throws {
-      let c = try d.container(keyedBy: K.self)
-      minFit = try c.decodeIfPresent(Double.self, forKey: .minFit) ?? minFit
-      minRes = try c.decodeIfPresent(Double.self, forKey: .minRes) ?? minRes
-      matchAppearance = try c.decodeIfPresent(Bool.self, forKey: .matchAppearance) ?? matchAppearance
-      interval = try c.decodeIfPresent(String.self, forKey: .interval) ?? interval
-      holdManual = try c.decodeIfPresent(String.self, forKey: .holdManual) ?? holdManual
+    init(from decoder: Decoder) throws {
+      let container = try decoder.container(keyedBy: K.self)
+      minFit = try container.decodeIfPresent(Double.self, forKey: .minFit) ?? minFit
+      minRes = try container.decodeIfPresent(Double.self, forKey: .minRes) ?? minRes
+      matchAppearance = try container.decodeIfPresent(Bool.self, forKey: .matchAppearance) ?? matchAppearance
+      interval = try container.decodeIfPresent(String.self, forKey: .interval) ?? interval
+      holdManual = try container.decodeIfPresent(String.self, forKey: .holdManual) ?? holdManual
     }
 
     var holdManualSeconds: TimeInterval {
@@ -53,21 +53,21 @@ struct Config: Decodable {
 
     init() {}
     private enum K: String, CodingKey { case perModule = "per_module", keep }
-    init(from d: Decoder) throws {
-      let c = try d.container(keyedBy: K.self)
-      perModule = try c.decodeIfPresent(Int.self, forKey: .perModule) ?? perModule
-      keep = try c.decodeIfPresent(Int.self, forKey: .keep) ?? keep
+    init(from decoder: Decoder) throws {
+      let container = try decoder.container(keyedBy: K.self)
+      perModule = try container.decodeIfPresent(Int.self, forKey: .perModule) ?? perModule
+      keep = try container.decodeIfPresent(Int.self, forKey: .keep) ?? keep
     }
   }
 
   private enum K: String, CodingKey { case library, generated, sources, rotation, pool }
-  init(from d: Decoder) throws {
-    let c = try d.container(keyedBy: K.self)
-    library = try c.decode(String.self, forKey: .library)
-    generated = try c.decodeIfPresent(String.self, forKey: .generated) ?? Root.dataDirectory.appending(path: "generated").path
-    sources = try c.decodeIfPresent(Sources.self, forKey: .sources) ?? Sources(enabled: [])
-    rotation = try c.decodeIfPresent(Rotation.self, forKey: .rotation) ?? Rotation()
-    pool = try c.decodeIfPresent(Pool.self, forKey: .pool) ?? Pool()
+  init(from decoder: Decoder) throws {
+    let container = try decoder.container(keyedBy: K.self)
+    library = try container.decode(String.self, forKey: .library)
+    generated = try container.decodeIfPresent(String.self, forKey: .generated) ?? Root.dataDirectory.appending(path: "generated").path
+    sources = try container.decodeIfPresent(Sources.self, forKey: .sources) ?? Sources(enabled: [])
+    rotation = try container.decodeIfPresent(Rotation.self, forKey: .rotation) ?? Rotation()
+    pool = try container.decodeIfPresent(Pool.self, forKey: .pool) ?? Pool()
   }
 }
 
@@ -98,28 +98,28 @@ enum Root {
     return try TOMLDecoder().decode(Config.self, from: text)
   }
 
-  private static func isRoot(_ dir: URL) -> Bool {
-    let fm = FileManager.default
-    return fm.fileExists(atPath: dir.appendingPathComponent("Package.swift").path)
-      && fm.fileExists(atPath: dir.appendingPathComponent("modules").path)
+  private static func isRoot(_ directory: URL) -> Bool {
+    let fileManager = FileManager.default
+    return fileManager.fileExists(atPath: directory.appendingPathComponent("Package.swift").path)
+      && fileManager.fileExists(atPath: directory.appendingPathComponent("modules").path)
   }
 
   private static func resolve() throws -> URL {
-    let fm = FileManager.default
-    if let env = ProcessInfo.processInfo.environment["WP_ROOT"] {
-      return URL(fileURLWithPath: env)
+    let fileManager = FileManager.default
+    if let override = ProcessInfo.processInfo.environment["WP_ROOT"] {
+      return URL(fileURLWithPath: override)
     }
-    var dir = URL(fileURLWithPath: fm.currentDirectoryPath)
+    var directory = URL(fileURLWithPath: fileManager.currentDirectoryPath)
     while true {
-      if isRoot(dir) { return dir }
-      let parent = dir.deletingLastPathComponent()
-      if parent.path == dir.path { break }
-      dir = parent
+      if isRoot(directory) { return directory }
+      let parent = directory.deletingLastPathComponent()
+      if parent.path == directory.path { break }
+      directory = parent
     }
-    let pointer = fm.homeDirectoryForCurrentUser.appendingPathComponent(".config/wp/root")
-    if let s = try? String(contentsOf: pointer, encoding: .utf8) {
-      let u = URL(fileURLWithPath: s.trimmingCharacters(in: .whitespacesAndNewlines))
-      if isRoot(u) { return u }
+    let pointer = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".config/wp/root")
+    if let text = try? String(contentsOf: pointer, encoding: .utf8) {
+      let url = URL(fileURLWithPath: text.trimmingCharacters(in: .whitespacesAndNewlines))
+      if isRoot(url) { return url }
     }
     throw WPError("can't find the wp repo root. set WP_ROOT, run from inside the repo, or `make install`")
   }

@@ -5,13 +5,13 @@ struct DisplaysCommand: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "displays", abstract: "list connected displays and what's on them")
 
   func run() throws {
-    for s in Screen.all {
-      let px = s.pixelSize, pt = s.pointSize
-      print("\(s.index)  \(s.name)\(s.isMain ? "  (main)" : "")")
-      print("   \(px.w)x\(px.h) px   \(pt.w)x\(pt.h) pt @\(Int(s.scale))x   aspect \(String(format: "%.3f", s.aspect))")
-      print("   uuid \(s.uuid)")
-      if let wp = s.currentWallpaper {
-        print("   wallpaper \(wp.path)  [\(Fill.describe(s.currentOptions))]")
+    for screen in Screen.all {
+      let pixels = screen.pixelSize, points = screen.pointSize
+      print("\(screen.index)  \(screen.name)\(screen.isMain ? "  (main)" : "")")
+      print("   \(pixels.w)x\(pixels.h) px   \(points.w)x\(points.h) pt @\(Int(screen.scale))x   aspect \(String(format: "%.3f", screen.aspect))")
+      print("   uuid \(screen.uuid)")
+      if let wallpaper = screen.currentWallpaper {
+        print("   wallpaper \(wallpaper.path)  [\(Fill.describe(screen.currentOptions))]")
       }
     }
   }
@@ -24,13 +24,13 @@ struct RmCommand: ParsableCommand {
 
   func run() throws {
     var index = try Index.load()
-    for p in paths {
-      let path = URL(fileURLWithPath: (p as NSString).expandingTildeInPath).standardizedFileURL.path
-      guard let c = index.candidates[path] else { throw ValidationError("not in the index: \(path)") }
-      guard c.kind == .generated else { throw ValidationError("\(c.name) is a library image; disable its source instead") }
-      try FileManager.default.trashItem(at: c.url, resultingItemURL: nil)
+    for argument in paths {
+      let path = URL(fileURLWithPath: (argument as NSString).expandingTildeInPath).standardizedFileURL.path
+      guard let candidate = index.candidates[path] else { throw ValidationError("not in the index: \(path)") }
+      guard candidate.kind == .generated else { throw ValidationError("\(candidate.name) is a library image; disable its source instead") }
+      try FileManager.default.trashItem(at: candidate.url, resultingItemURL: nil)
       index.candidates.removeValue(forKey: path)
-      print("trashed \(c.source)/\(c.name)")
+      print("trashed \(candidate.source)/\(candidate.name)")
     }
     try index.save()
   }
@@ -49,11 +49,11 @@ struct SetCommand: ParsableCommand {
       throw ValidationError("no such file: \(url.path)")
     }
     var index = try Index.load()
-    for s in try Screen.select(display) {
-      try NSWorkspace.shared.setDesktopImageURL(url, for: s.nsScreen, options: fill.options)
+    for screen in try Screen.select(display) {
+      try NSWorkspace.shared.setDesktopImageURL(url, for: screen.nsScreen, options: fill.options)
       index.markShown(url.standardizedFileURL.path)
-      index.markManual(s)
-      print("\(s.index) \(s.name) <- \(url.lastPathComponent)  [\(fill.rawValue)]")
+      index.markManual(screen)
+      print("\(screen.index) \(screen.name) <- \(url.lastPathComponent)  [\(fill.rawValue)]")
     }
     try index.save()
   }

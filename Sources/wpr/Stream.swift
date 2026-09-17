@@ -9,7 +9,7 @@ import Foundation
 struct StreamCommand: ParsableCommand {
   static let configuration = CommandConfiguration(commandName: "stream", abstract: "render a module as an animation: png frames, an mp4, or raw frames on stdout")
 
-  @Argument(help: "metal module name (see `wp modules`)") var module: String
+  @Argument(help: "metal module name (see `wpr modules`)") var module: String
   @Option(name: .shortAndLong, help: "seed; random if omitted") var seed: UInt32?
   @Option(name: .long, help: "frame size, WxH") var size: String
   @Option(name: .long, help: "frames per second") var fps: Double = 12
@@ -21,24 +21,24 @@ struct StreamCommand: ParsableCommand {
   @Flag(name: .shortAndLong, help: "progress on stderr") var verbose = false
 
   func run() throws {
-    let m = try Module.named(module)
-    guard m.host == .metal else { throw ValidationError("only metal modules animate; \(m.name) is \(m.host.rawValue)") }
+    let selectedModule = try Module.named(module)
+    guard selectedModule.host == .metal else { throw ValidationError("only metal modules animate; \(selectedModule.name) is \(selectedModule.host.rawValue)") }
     let parts = size.lowercased().split(separator: "x").compactMap { Int($0) }
     guard parts.count == 2 else { throw ValidationError("--size must look like 800x480") }
-    let (w, h) = (parts[0], parts[1])
+    let (width, height) = (parts[0], parts[1])
     guard fps > 0 else { throw ValidationError("--fps must be positive") }
     let seed = seed ?? UInt32.random(in: 0..<16_000_000)
-    let source = try String(contentsOf: m.entryURL, encoding: .utf8)
-    let renderer = try MetalRenderer(source: source, width: w, height: h, params: set)
+    let source = try String(contentsOf: selectedModule.entryURL, encoding: .utf8)
+    let renderer = try MetalRenderer(source: source, width: width, height: height, params: set)
     let total = seconds > 0 ? Int((seconds * fps).rounded()) : Int.max
     let stderr = FileHandle.standardError
 
     var sink: Sink
     if let out {
       if out.lowercased().hasSuffix(".mp4") {
-        sink = try FFmpegSink(path: (out as NSString).expandingTildeInPath, width: w, height: h, fps: fps)
+        sink = try FFmpegSink(path: (out as NSString).expandingTildeInPath, width: width, height: height, fps: fps)
       } else {
-        sink = PNGSink(dir: URL(fileURLWithPath: (out as NSString).expandingTildeInPath), width: w, height: h)
+        sink = PNGSink(directory: URL(fileURLWithPath: (out as NSString).expandingTildeInPath), width: width, height: height)
       }
     } else {
       guard seconds > 0 || !FileHandle.standardOutput.isTerminal else { throw ValidationError("raw frames on a terminal? give --out or redirect") }
@@ -48,18 +48,18 @@ struct StreamCommand: ParsableCommand {
       default: throw ValidationError("--format is gray8 or bgra8")
       }
     }
-    if verbose { stderr.write("\(m.name) seed=\(seed) \(w)x\(h) @\(fps)fps -> \(out ?? "stdout \(format)")\n".data(using: .utf8)!) }
+    if verbose { stderr.write("\(selectedModule.name) seed=\(seed) \(width)x\(height) @\(fps)fps -> \(out ?? "stdout \(format)")\n".data(using: .utf8)!) }
 
     let started = Date()
-    var i = 0
-    while i < total {
-      let t = Float(start + Double(i) / fps)
-      let bytes = try renderer.frame(seed: seed, time: t)
-      try sink.write(bytes, index: i, renderer: renderer)
-      i += 1
-      if verbose && i % Int(max(fps, 1)) == 0 {
-        let el = Date().timeIntervalSince(started)
-        stderr.write("  \(i) frames, \(String(format: "%.1f", Double(i) / el)) fps\n".data(using: .utf8)!)
+    var frameIndex = 0
+    while frameIndex < total {
+      let time = Float(start + Double(frameIndex) / fps)
+      let bytes = try renderer.frame(seed: seed, time: time)
+      try sink.write(bytes, index: frameIndex, renderer: renderer)
+      frameIndex += 1
+      if verbose && frameIndex % Int(max(fps, 1)) == 0 {
+        let elapsed = Date().timeIntervalSince(started)
+        stderr.write("  \(frameIndex) frames, \(String(format: "%.1f", Double(frameIndex) / elapsed)) fps\n".data(using: .utf8)!)
       }
     }
     try sink.finish()
@@ -72,14 +72,14 @@ private protocol Sink {
 }
 
 private struct PNGSink: Sink {
-  let dir: URL, width: Int, height: Int
+  let directory: URL, width: Int, height: Int
   func write(_ bgra: [UInt8], index: Int, renderer: MetalRenderer) throws {
     var bytes = bgra
     let info = CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-    guard let ctx = CGContext(data: &bytes, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
-                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info),
-          let img = ctx.makeImage() else { throw WPError("couldn't build CGImage") }
-    try MetalHost.writePNG(img, to: dir.appendingPathComponent(String(format: "%05d.png", index)))
+    guard let context = CGContext(data: &bytes, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info),
+          let image = context.makeImage() else { throw WPError("couldn't build CGImage") }
+    try MetalHost.writePNG(image, to: directory.appendingPathComponent(String(format: "%05d.png", index)))
   }
   func finish() throws {}
 }
@@ -88,12 +88,12 @@ private struct RawSink: Sink {
   let gray: Bool
   func write(_ bgra: [UInt8], index: Int, renderer: MetalRenderer) throws {
     if gray {
-      var g = [UInt8](repeating: 0, count: bgra.count / 4)
-      for p in 0..<g.count {
-        let b = Int(bgra[p * 4]), gg = Int(bgra[p * 4 + 1]), r = Int(bgra[p * 4 + 2])
-        g[p] = UInt8((r * 299 + gg * 587 + b * 114) / 1000)   // rec.601 luma
+      var luma = [UInt8](repeating: 0, count: bgra.count / 4)
+      for pixel in 0..<luma.count {
+        let blue = Int(bgra[pixel * 4]), green = Int(bgra[pixel * 4 + 1]), red = Int(bgra[pixel * 4 + 2])
+        luma[pixel] = UInt8((red * 299 + green * 587 + blue * 114) / 1000)   // rec.601
       }
-      FileHandle.standardOutput.write(Data(g))
+      FileHandle.standardOutput.write(Data(luma))
     } else {
       FileHandle.standardOutput.write(Data(bgra))
     }

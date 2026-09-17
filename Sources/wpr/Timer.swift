@@ -20,8 +20,8 @@ struct TimerCommand: ParsableCommand {
     @Option(name: .long, help: "interval like 30m, 2h, 900s (default: rotation.interval from config)") var every: String?
 
     func run() throws {
-      let cfg = try Root.config()
-      let seconds = try parseDuration(every ?? cfg.rotation.interval)
+      let configuration = try Root.config()
+      let seconds = try parseDuration(every ?? configuration.rotation.interval)
       // launchd runs whichever binary installed it
       guard let program = Bundle.main.executableURL else { throw WPError("can't tell where this binary is") }
       let plist: [String: Any] = [
@@ -36,9 +36,9 @@ struct TimerCommand: ParsableCommand {
       let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
       _ = launchctl("bootout", "\(domain)/\(label)")
       try data.write(to: plistURL)
-      let r = launchctl("bootstrap", domain, plistURL.path)
-      guard r.status == 0 else { throw WPError("launchctl bootstrap failed: \(r.stderr)") }
-      print("installed \(label): `\(program.path) tick` every \(every ?? cfg.rotation.interval), log at \(logURL.path)")
+      let result = launchctl("bootstrap", domain, plistURL.path)
+      guard result.status == 0 else { throw WPError("launchctl bootstrap failed: \(result.stderr)") }
+      print("installed \(label): `\(program.path) tick` every \(every ?? configuration.rotation.interval), log at \(logURL.path)")
     }
   }
 
@@ -58,9 +58,9 @@ struct TimerCommand: ParsableCommand {
     static let configuration = CommandConfiguration(abstract: "show whether the agent is loaded and the recent log")
 
     func run() throws {
-      let r = launchctl("print", "\(domain)/\(label)")
-      if r.status == 0 {
-        let interesting = r.stdout.split(separator: "\n").filter {
+      let result = launchctl("print", "\(domain)/\(label)")
+      if result.status == 0 {
+        let interesting = result.stdout.split(separator: "\n").filter {
           $0.contains("state =") || $0.contains("run interval") || $0.contains("last exit") || $0.contains("runs =")
         }
         print("loaded: \(label)")
@@ -69,38 +69,38 @@ struct TimerCommand: ParsableCommand {
         print("not loaded (\(plistURL.path) \(FileManager.default.fileExists(atPath: plistURL.path) ? "exists" : "missing"))")
       }
       print("power: \(Power.isOnAC() ? "AC" : "battery")")
-      if let cfg = try? Root.config(), let index = try? Index.load() {
+      if let configuration = try? Root.config(), let index = try? Index.load() {
         let clock = DateFormatter()
         clock.dateFormat = "HH:mm"
-        for s in Screen.all {
-          if let until = index.heldUntil(s, hold: cfg.rotation.holdManualSeconds) {
-            print("hold: \(s.index) \(s.name) set by hand, rotation resumes \(clock.string(from: until))")
+        for screen in Screen.all {
+          if let until = index.heldUntil(screen, hold: configuration.rotation.holdManualSeconds) {
+            print("hold: \(screen.index) \(screen.name) set by hand, rotation resumes \(clock.string(from: until))")
           }
         }
       }
       if let log = try? String(contentsOf: logURL, encoding: .utf8) {
         let tail = log.split(separator: "\n").suffix(8)
-        if !tail.isEmpty { print("recent log:"); for l in tail { print("  \(l)") } }
+        if !tail.isEmpty { print("recent log:"); for line in tail { print("  \(line)") } }
       }
     }
   }
 
-  static func launchctl(_ args: String...) -> Subprocess.Result {
-    (try? Subprocess.run(executable: "/bin/launchctl", arguments: args))
+  static func launchctl(_ arguments: String...) -> Subprocess.Result {
+    (try? Subprocess.run(executable: "/bin/launchctl", arguments: arguments))
       ?? Subprocess.Result(status: -1, stdout: "", stderr: "couldn't run launchctl")
   }
 
-  static func parseDuration(_ s: String) throws -> Int {
-    let t = s.trimmingCharacters(in: .whitespaces).lowercased()
+  static func parseDuration(_ text: String) throws -> Int {
+    let trimmed = text.trimmingCharacters(in: .whitespaces).lowercased()
     let unit: Int
     let digits: Substring
-    switch t.last {
-    case "h": unit = 3600; digits = t.dropLast()
-    case "m": unit = 60; digits = t.dropLast()
-    case "s": unit = 1; digits = t.dropLast()
-    default: unit = 1; digits = Substring(t)
+    switch trimmed.last {
+    case "h": unit = 3600; digits = trimmed.dropLast()
+    case "m": unit = 60; digits = trimmed.dropLast()
+    case "s": unit = 1; digits = trimmed.dropLast()
+    default: unit = 1; digits = Substring(trimmed)
     }
-    guard let n = Int(digits), n > 0 else { throw ValidationError("bad duration '\(s)' (try 30m, 2h, 900s)") }
-    return n * unit
+    guard let number = Int(digits), number > 0 else { throw ValidationError("bad duration '\(text)' (try 30m, 2h, 900s)") }
+    return number * unit
   }
 }
