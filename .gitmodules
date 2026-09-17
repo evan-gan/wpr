@@ -7,3 +7,6 @@
 [submodule "vendor/webgl-wireframes"]
 	path = vendor/webgl-wireframes
 	url = https://github.com/mattdesl/webgl-wireframes
+[submodule "vendor/glsl-noise"]
+	path = vendor/glsl-noise
+	url = https://github.com/hughsk/glsl-noise

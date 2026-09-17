@@ -30,7 +30,7 @@ try {
   const [fragSrc, vertSrc, noiseSrc, gui] = await Promise.all([
     fetch("/vendor/webgl-wireframes/lib/wire.frag").then((r) => r.text()),
     fetch("/vendor/webgl-wireframes/lib/wire.vert").then((r) => r.text()),
-    fetch("/hosts/web/node_modules/glsl-noise/simplex/4d.glsl").then((r) => r.text()),
+    fetch("/vendor/glsl-noise/simplex/4d.glsl").then((r) => r.text()),
     fetch("/vendor/webgl-wireframes/lib/gui.json").then((r) => r.json()),
   ]);
 
