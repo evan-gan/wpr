@@ -6,7 +6,7 @@ library = "~/Pictures/Wallpapers"
 generated = "~/Library/Application Support/wpr/generated"
 
 [sources]
-# folders (by name) and generator modules in the rotation. `wp sources` lists what's available.
+# folders (by name) and generator modules in the rotation. `wpr sources` lists what's available.
 enabled = ["tunic", "melange", "wells", "neon-contours"]
 
 [rotation]
@@ -16,7 +16,7 @@ min_fit = 0.6
 min_res = 0.3
 # prefer dark wallpapers in dark mode and bright ones in light mode
 match_appearance = true
-# how often `wp timer` runs `wp tick`
+# how often `wpr timer` runs `wpr tick`
 interval = "30m"
 # after you set a wallpaper yourself (set / gen / next), the timer leaves that display alone this long
 hold_manual = "2h"
