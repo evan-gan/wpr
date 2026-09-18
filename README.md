@@ -40,7 +40,7 @@ wpr install maxwofford/wpr-spectra
 wpr install https://github.com/maxwofford/wpr-spectra
 wpr install git@github.com:maxwofford/wpr-spectra.git
 # even install them locally so you can modify them
-git clone install git@github.com:maxwofford/wpr-spectra.git &&
+git clone git@github.com:maxwofford/wpr-spectra.git &&
 wpr install ./wpr-spectra
 
 # now use it!
