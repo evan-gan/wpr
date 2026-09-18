@@ -10,6 +10,7 @@ struct TickCommand: AsyncParsableCommand {
 
   @Flag(name: .long, help: "generate even on battery") var forceGenerate = false
   @Flag(name: .long, help: "don't change wallpapers, just maintain the pool") var noRotate = false
+  @OptionGroup var spaces: SpacesOption
 
   func run() async throws {
     let configuration = try Root.config()
@@ -58,6 +59,7 @@ struct TickCommand: AsyncParsableCommand {
       log("on battery; skipping generation")
     }
 
+    var applied: [String: URL] = [:]
     if !noRotate {
       let picker = Picker(configuration: configuration, index: index)
       var used = Set<String>()
@@ -74,10 +76,17 @@ struct TickCommand: AsyncParsableCommand {
         }
         used.insert(entry.candidate.path)
         try NSWorkspace.shared.setDesktopImageURL(entry.candidate.url, for: screen.nsScreen, options: Fill.crop.options)
+        applied[screen.uuid] = entry.candidate.url
         index.markShown(entry.candidate.path)
         log("\(screen.index) \(screen.name) <- \(entry.candidate.source)/\(entry.candidate.name)")
       }
     }
     try index.save()
+    // log instead of throwing: the current Space already changed, and launchd only keeps the log
+    do {
+      try spaces.spread(applied, configuration: configuration)
+    } catch {
+      log("couldn't copy to other Spaces: \(error)")
+    }
   }
 }

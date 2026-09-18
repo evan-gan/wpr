@@ -33,6 +33,7 @@ here are some i didn't make, but packaged up (credits in each repo)
 # the basics...
 wpr next                  # set the next wallpaper in the queue
 wpr timer install         # automatically set it every 30 min
+wpr next --no-all-spaces  # only change the current Space (default: every Space, see all_spaces in config)
 
 # want some shaders? install them kinda like brew
 wpr install maxwofford/spectra

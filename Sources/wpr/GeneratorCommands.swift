@@ -24,6 +24,7 @@ struct GenCommand: AsyncParsableCommand {
   @Option(name: .long, help: "animation time in seconds, for modules that move (metal only)") var time: Float = 0
   @Flag(name: .long, help: "write the file but don't set it as wallpaper") var noSet = false
   @Flag(name: .shortAndLong, help: "show host/module logs") var verbose = false
+  @OptionGroup var spaces: SpacesOption
 
   func run() async throws {
     let selectedModule = try Module.named(module)
@@ -43,6 +44,7 @@ struct GenCommand: AsyncParsableCommand {
     }
 
     var index = out == nil ? try Index.load() : nil
+    var applied: [String: URL] = [:]
     for target in targets {
       let start = Date()
       let url = out.map { URL(fileURLWithPath: ($0 as NSString).expandingTildeInPath) }
@@ -53,12 +55,14 @@ struct GenCommand: AsyncParsableCommand {
       index?.add(generated: url, module: selectedModule, seed: seed, width: target.width, height: target.height)
       if let screen = target.screen, !noSet {
         try NSWorkspace.shared.setDesktopImageURL(url, for: screen.nsScreen, options: Fill.crop.options)
+        applied[screen.uuid] = url
         index?.markShown(url.standardizedFileURL.path)
         index?.markManual(screen)
         print("  -> \(screen.index) \(screen.name)")
       }
     }
     try index?.save()
+    try spaces.spread(applied, configuration: configuration)
   }
 }
 

@@ -43,20 +43,25 @@ struct SetCommand: ParsableCommand {
   @Argument(help: "path to an image") var image: String
   @Option(name: .shortAndLong, help: "display index, name substring, or 'all'") var display: String?
   @Option(name: .shortAndLong, help: "how to fit the image: \(Fill.allCases.map(\.rawValue).joined(separator: "|"))") var fill: Fill = .crop
+  @OptionGroup var spaces: SpacesOption
 
   func run() throws {
     let url = URL(fileURLWithPath: (image as NSString).expandingTildeInPath).standardizedFileURL
     guard FileManager.default.fileExists(atPath: url.path) else {
       throw ValidationError("no such file: \(url.path)")
     }
+    let configuration = try Root.config()
     var index = try Index.load()
+    var applied: [String: URL] = [:]
     for screen in try Screen.select(display) {
       try NSWorkspace.shared.setDesktopImageURL(url, for: screen.nsScreen, options: fill.options)
+      applied[screen.uuid] = url
       index.markShown(url.standardizedFileURL.path)
       index.markManual(screen)
       print("\(screen.index) \(screen.name) <- \(url.lastPathComponent)  [\(fill.rawValue)]")
     }
     try index.save()
+    try spaces.spread(applied, configuration: configuration)
   }
 }
 
@@ -66,15 +71,19 @@ struct NextCommand: AsyncParsableCommand {
   @Option(name: .shortAndLong, help: "display index, name substring, or 'all'") var display: String?
   @Option(name: .shortAndLong, help: "restrict to one source (folder or module)") var source: String?
   @Flag(name: .long, help: "print the pick without setting it") var dryRun = false
+  @OptionGroup var spaces: SpacesOption
 
   func run() async throws {
     let configuration = try Root.config()
     var index = try Index.load()
     let picker = Picker(configuration: configuration, index: index)
     var used = Set<String>()
+    var applied: [String: URL] = [:]
     for screen in try Screen.select(display) {
       guard let entry = picker.pick(for: screen, source: source, avoiding: used) else {
-        try await generateFresh(for: screen, configuration: configuration, index: &index)
+        if let url = try await generateFresh(for: screen, configuration: configuration, index: &index) {
+          applied[screen.uuid] = url
+        }
         continue
       }
       let candidate = entry.candidate
@@ -83,26 +92,31 @@ struct NextCommand: AsyncParsableCommand {
       print("\(screen.index) \(screen.name) <- \(candidate.source)/\(candidate.name)  fit \(String(format: "%.2f", entry.fit)) res \(String(format: "%.2f", entry.resolution))\(luminance)\(dryRun ? "  (dry run)" : "")")
       if !dryRun {
         try NSWorkspace.shared.setDesktopImageURL(candidate.url, for: screen.nsScreen, options: Fill.crop.options)
+        applied[screen.uuid] = candidate.url
         index.markShown(candidate.path)
         index.markManual(screen)
       }
     }
-    if !dryRun { try index.save() }
+    if !dryRun {
+      try index.save()
+      try spaces.spread(applied, configuration: configuration)
+    }
   }
 
   // nothing in the pool fits this display: render one from an enabled module right now, so a
   // fresh install (or a new display) gets a wallpaper on the first `next` instead of a shrug
-  private func generateFresh(for screen: Screen, configuration: Config, index: inout Index) async throws {
+  // returns the file it set, or nil if it had nothing to generate from (or was a dry run)
+  private func generateFresh(for screen: Screen, configuration: Config, index: inout Index) async throws -> URL? {
     let enabled = try Module.discover().filter { configuration.sources.enabled.contains($0.name) && (source == nil || $0.name == source) }
     guard let module = enabled.randomElement() else {
       print("\(screen.index) \(screen.name): nothing eligible and no enabled modules (enabled: \(configuration.sources.enabled.joined(separator: ", ")))")
-      return
+      return nil
     }
     let seed = UInt32.random(in: 0..<16_000_000)
     let (width, height) = screen.pixelSize
     if dryRun {
       print("\(screen.index) \(screen.name): nothing in the pool; would generate \(module.name) seed \(seed)  (dry run)")
-      return
+      return nil
     }
     let url = configuration.generatedURL.appendingPathComponent("\(module.name)-\(seed)-\(width)x\(height).png")
     try await Generator.generate(module, width: width, height: height, seed: seed, params: [], to: url, verbose: false)
@@ -111,6 +125,7 @@ struct NextCommand: AsyncParsableCommand {
     index.markShown(url.standardizedFileURL.path)
     index.markManual(screen)
     print("\(screen.index) \(screen.name) <- \(module.name)/\(url.lastPathComponent)  (generated now)")
+    return url
   }
 }
 

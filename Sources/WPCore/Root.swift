@@ -28,10 +28,11 @@ public struct Config: Decodable {
     public var matchAppearance = true
     public var interval = "30m"
     public var holdManual = "2h"
+    public var allSpaces = true
 
     init() {}
     private enum K: String, CodingKey {
-      case minFit = "min_fit", minRes = "min_res", matchAppearance = "match_appearance", interval, holdManual = "hold_manual"
+      case minFit = "min_fit", minRes = "min_res", matchAppearance = "match_appearance", interval, holdManual = "hold_manual", allSpaces = "all_spaces"
     }
     public init(from decoder: Decoder) throws {
       let container = try decoder.container(keyedBy: K.self)
@@ -40,6 +41,7 @@ public struct Config: Decodable {
       matchAppearance = try container.decodeIfPresent(Bool.self, forKey: .matchAppearance) ?? matchAppearance
       interval = try container.decodeIfPresent(String.self, forKey: .interval) ?? interval
       holdManual = try container.decodeIfPresent(String.self, forKey: .holdManual) ?? holdManual
+      allSpaces = try container.decodeIfPresent(Bool.self, forKey: .allSpaces) ?? allSpaces
     }
 
     public var holdManualSeconds: TimeInterval {

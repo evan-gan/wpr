@@ -20,6 +20,9 @@ match_appearance = true
 interval = "30m"
 # after you set a wallpaper yourself (set / gen / next), the timer leaves that display alone this long
 hold_manual = "2h"
+# set wallpapers on every Space (desktop), not just the current one. restarts WallpaperAgent,
+# so the desktop may flicker. override per run with --all-spaces / --no-all-spaces
+all_spaces = true
 
 [pool]
 # unseen generated wallpapers to keep on hand, per module per display size (topped up on AC power only)
