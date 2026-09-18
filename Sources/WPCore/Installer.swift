@@ -3,7 +3,8 @@ import Foundation
 // where a module comes from: a git repository cloned to modules/<host>/<owner>/<name>, or a
 // folder on this machine symlinked to modules/local/<name>
 public enum ModuleSource {
-  case repository(url: String, host: String, owner: String, name: String)
+  /// urls to try in order: "owner/name" means owner/wpr-name first, then owner/name
+  case repository(urls: [String], host: String, owner: String, name: String)
   case folder(URL)
 
   /// "owner/name" (github), "host/owner/name", any git url, or a path starting with . / ~
@@ -14,21 +15,28 @@ public enum ModuleSource {
     if let url = URL(string: text), let host = url.host, text.contains("://") {
       let parts = url.path.split(separator: "/").map(String.init)
       guard parts.count >= 2 else { throw WPError("can't tell owner/name from \(text)") }
-      return .repository(url: text, host: host, owner: parts[parts.count - 2], name: Module.name(fromRepository: parts[parts.count - 1]))
+      return .repository(urls: [text], host: host, owner: parts[parts.count - 2], name: Module.name(fromRepository: parts[parts.count - 1]))
     }
     if let colon = text.firstIndex(of: ":"), text.contains("@"), !text.contains("/", before: colon) {
       // git@host:owner/name.git
       let host = String(text[text.index(after: text.firstIndex(of: "@")!)..<colon])
       let parts = text[text.index(after: colon)...].split(separator: "/").map(String.init)
       guard parts.count == 2 else { throw WPError("can't tell owner/name from \(text)") }
-      return .repository(url: text, host: host, owner: parts[0], name: Module.name(fromRepository: parts[1]))
+      return .repository(urls: [text], host: host, owner: parts[0], name: Module.name(fromRepository: parts[1]))
     }
     let parts = text.split(separator: "/").map(String.init)
     switch parts.count {
-    case 2: return .repository(url: "https://github.com/\(parts[0])/\(parts[1])", host: "github.com", owner: parts[0], name: Module.name(fromRepository: parts[1]))
-    case 3 where parts[0].contains("."): return .repository(url: "https://\(text)", host: parts[0], owner: parts[1], name: Module.name(fromRepository: parts[2]))
+    case 2: return shorthand(host: "github.com", owner: parts[0], repository: parts[1])
+    case 3 where parts[0].contains("."): return shorthand(host: parts[0], owner: parts[1], repository: parts[2])
     default: throw WPError("don't know how to install '\(text)': use owner/name, host/owner/name, a git url, or a path starting with ./ or /")
     }
+  }
+
+  // the convention is a wpr- prefix on the repository, so "owner/tunic" looks for wpr-tunic first
+  private static func shorthand(host: String, owner: String, repository: String) -> ModuleSource {
+    let name = Module.name(fromRepository: repository)
+    let repositories = repository.hasPrefix("wpr-") ? [repository] : ["wpr-\(repository)", repository]
+    return .repository(urls: repositories.map { "https://\(host)/\(owner)/\($0)" }, host: host, owner: owner, name: name)
   }
 
   public var fullName: String {
@@ -71,16 +79,21 @@ public enum Installer {
         throw WPError("no \(Module.manifestFile) in \(folder.path)")
       }
       try fileManager.createSymbolicLink(at: destination, withDestinationURL: folder)
-    case let .repository(url, _, _, _):
-      let result = try git("clone", "--quiet", "--depth", "1", url, destination.path)
-      guard result.status == 0 else {
-        removeEmptyParents(of: destination)
-        throw WPError("git clone failed:\n\(result.stderr)")
-      }
-      guard fileManager.fileExists(atPath: destination.appending(path: Module.manifestFile).path) else {
+    case let .repository(urls, _, _, _):
+      var failures: [String] = []
+      for url in urls {
+        let result = try git("clone", "--quiet", "--depth", "1", url, destination.path)
+        if result.status != 0 {
+          failures.append("\(url): \(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))")
+          continue
+        }
+        if fileManager.fileExists(atPath: destination.appending(path: Module.manifestFile).path) { break }
         try? fileManager.removeItem(at: destination)
+        failures.append("\(url): no \(Module.manifestFile) at its root, so it isn't a wpr module")
+      }
+      guard fileManager.fileExists(atPath: destination.path) else {
         removeEmptyParents(of: destination)
-        throw WPError("\(url) has no \(Module.manifestFile) at its root, so it isn't a wpr module")
+        throw WPError("couldn't install from any of:\n  " + failures.joined(separator: "\n  "))
       }
     }
     return try Module.named(source.fullName)
